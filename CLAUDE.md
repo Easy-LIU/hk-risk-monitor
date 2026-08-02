@@ -142,6 +142,16 @@ src/
   — matrix subtraction handles diff in one line and is cache-friendly. Be
   ready to explain this reasoning in an interview.
 
+- **RegimeDetector tracks three signal types**: share jumps, edge
+  appearance/disappearance, and centrality rank flips.
+  - **Centrality rank flip** detects when the dominant risk source
+    switches between SPX and SSEC. Business rationale: hedging
+    instrument choice is a discrete decision (US-linked vs. China-linked
+    instruments). A gradual shift may never trigger the weight-jump
+    threshold on any single day, yet still cross the point where the
+    existing hedge becomes mismatched. This signal covers that blind
+    spot.
+
 - **RegimeDetector validation standard**: without telling it about any
   historical event, check whether it can automatically flag March 2020
   (COVID), July 2018 (trade war), and March 2022 (rate hikes). It only
