@@ -27,9 +27,10 @@ class SpilloverNetwork:
     weight is source's contribution to target's forecast error variance."""
 
     # Calibrated on the real 2015-2026 rolling sample; see docs/design.md
-    # section 6 for the empirical justification and the caveat that this
-    # is a sample-specific calibration, not a universal constant.
-    EDGE_THRESHOLD = 0.01
+    # section 6 for the empirical justification (chosen for signal
+    # composition, not event count) and the caveat that this is a
+    # sample-specific calibration, not a universal constant.
+    EDGE_THRESHOLD = 0.02
 
     def __init__(self, fevd_matrix: pd.DataFrame, node_names: list[str]):
         self.node_names = list(node_names)

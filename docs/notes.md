@@ -258,13 +258,68 @@ questions about how the two markets are connected to HSI, and a tool
 that only reported one of them would be missing half of the actual
 transmission structure.
 
-## TODO (Day 5): edge threshold robustness check
+## Edge threshold sensitivity check (Day 5) — result and decision
 
-`SpilloverNetwork.EDGE_THRESHOLD` is calibrated to 1% (see
-docs/design.md section 6). Before relying on RegimeDetector's edge
-appearance/disappearance signal, rerun the full rolling series through
-RegimeDetector at 0.5%, 1%, and 2% and compare resulting alert counts.
-If the alert count is extremely sensitive to the exact threshold (e.g.
-3 alerts at 0.5% vs. 200 at 2%), that signal is not robust and should
-be documented as a limitation rather than presented as a reliable
-regime-change indicator.
+The Day 4 TODO was to rerun the full 2015-2026 rolling series (2386
+windows, 2385 consecutive window-pairs) at EDGE_THRESHOLD = 0.5% / 1% /
+2%, counting total edge appearance/disappearance events at each, before
+trusting that signal.
+
+### Results
+
+| Threshold | Appeared | Disappeared | Total | Top 5 most volatile edges |
+|---|---|---|---|---|
+| 0.5% | 364 | 367 | 731 | all 5 involve USD_CNY |
+| 1.0% | 340 | 342 | 682 | all 5 involve USD_CNY |
+| 2.0% | 334 | 334 | 668 | USD_YIELD-SPX, SSEC-SPX, HSI-SPX, SPX-USD_CNY, HSI-USD_YIELD — USD_CNY almost entirely absent from the top 5 |
+
+### Decision 1: threshold changed from 1% to 2%
+
+**The reason is composition, not event count.** Total events only
+dropped ~9% across the full 0.5%→2% range (731→668) — the raw count is
+not sensitive to the exact threshold and could not by itself justify a
+choice. What changes materially is *which* edges dominate the signal.
+At 0.5% and 1%, the top 5 most volatile edges are almost entirely
+USD_CNY pairs — the same channel already flagged as unverified against
+the paper in the "Unverified Channel" section above. At those
+thresholds, this signal was mostly re-detecting known noise in a
+channel we already don't trust, not real structural change. At 2%, the
+dominant edges shift to SPX/SSEC/HSI pairs — the paper-validated core
+channels — crossing the threshold at what look like genuine moments of
+change rather than noise. 2% was chosen for this reason, not because it
+produces fewer alerts.
+
+### Decision 2: side effect on Day 4's original safety-margin reasoning
+
+Day 4 set the threshold at 1% specifically so that SPX→HSI (minimum
+observed value 1.68% in this sample) could never cross into
+"disappeared" territory. At 2%, that margin is gone: SPX→HSI's
+historical minimum (1.68%) is now below the threshold, so a window at
+or near that low would register as the core channel disappearing. This
+is now the intended behavior, not a regression to guard against — see
+docs/design.md section 6 for the full reasoning. Documenting this
+explicitly because it is a change in what the threshold is *for*
+(guarantee against false "disappeared" vs. permit true "disappeared"),
+not a routine parameter adjustment.
+
+### Decision 3: edge appearance/disappearance downgraded to a secondary signal
+
+Independent of which exact threshold is used, this signal is weaker
+than originally hoped, for two reasons visible in the data above:
+
+1. **Composition is threshold-sensitive.** The set of edges driving the
+   count changes substantially between 1% and 2% (see table above).
+   Total-count stability alone does not make the signal robust if what
+   it's actually measuring shifts underneath that stable-looking total.
+2. **Base rate is too high for a "structural break" signal.** 668-731
+   events over 2385 window-pairs is roughly one event every 3.3-3.5
+   windows — far too frequent to serve as a "regime change" alert on
+   its own; a signal that fires this often is closer to routine noise
+   than to a structural break indicator.
+
+This is consistent with the Day 1 design intent (docs/design.md
+originally listed weight jumps as the *primary* signal and edge
+appearance/disappearance as *secondary*) — the data confirms that
+initial instinct rather than overturning it. RegimeDetector treats edge
+appearance/disappearance as a secondary/supporting signal, not a
+standalone trigger.

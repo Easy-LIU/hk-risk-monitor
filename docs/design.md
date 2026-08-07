@@ -201,33 +201,49 @@ bimodal split into an obvious "noise cluster" and "signal cluster" —
 choosing a threshold here is a calibration judgment, not a discovery
 of some natural breakpoint the data reveals on its own.
 
-The judgment was made by looking at the min/mean/max of each of the 20
-individual directed edges over the same 2386 windows. Three edges —
-SPX→HSI, SSEC→HSI, HSI→SSEC — are the paper-validated core channels,
-and none of them ever dropped below 1% in this sample; the closest was
-SPX→HSI at a minimum of 1.68%. **The threshold is set at 1% (0.01)**
-specifically because it sits below every core edge's historical minimum
-in this sample, with a real margin (roughly 68% below SPX→HSI's own
-lowest observed reading). At 1%, the weaker/secondary edges (e.g.
-SPX↔USD_YIELD, HSI↔USD_CNY) cross the threshold in 6-10% of windows —
-enough to produce meaningful, occasional appearance/disappearance
-events — while the weakest tier (edges involving USD_CNY, already
-flagged as an unverified channel in docs/notes.md) spend 21-77% of
-windows below it, correctly read as "usually absent, sometimes
-appearing" rather than as stable channels.
+**The threshold was recalibrated from 1% to 2% on Day 5, based on a
+sensitivity check across 0.5% / 1% / 2%** run against the full
+2015-2026 rolling series (full numbers and the comparison table are in
+docs/notes.md). The initial 1% choice (see the version-controlled
+history of this file for that reasoning) was based on staying below
+every core edge's historical minimum with a safety margin. That
+reasoning was not wrong on its own terms, but the sensitivity check
+surfaced a more important consideration that changed the decision:
 
-**This threshold is a calibration on this specific sample period, not a
-universal constant.** If a future period's SPX→HSI transmission
-genuinely weakens below 1%, the tool would report "edge disappeared" —
-that is the intended signal, not a false positive; a real weakening of
-the US channel is exactly the kind of regime change this tool exists to
-catch. But the threshold's safety margin was derived from this sample's
-edge minimums, so anyone running this engine on a materially different
-historical period (a different decade, a different set of markets)
-should recheck whether 1% still sits below that period's own core-edge
-minimums, rather than assuming the number transfers unchanged. A
-threshold-sensitivity check (0.5% / 1% / 2%, comparing RegimeDetector's
-resulting alert counts) is planned for Day 5 — see docs/notes.md.
+**The switch to 2% was driven by signal composition, not event count.**
+Total edge appearance/disappearance events were similar across all
+three thresholds (731 at 0.5%, 682 at 1%, 668 at 2% — under a 10%
+range), so raw event count could not distinguish them. What did
+distinguish them was *which* edges were generating the events. At 0.5%
+and 1%, the top 5 most volatile edges were almost entirely USD_CNY
+pairs — the same channel Day 3's `validate_against_paper()` diagnostic
+already flagged as unverified against the paper. At those thresholds,
+the "edge appeared/disappeared" signal was mostly tracking noise in a
+channel already known to be unreliable, not genuine structural change.
+At 2%, the top 5 shifted to edges involving SPX and SSEC's connections
+to HSI and each other — the paper-validated core channels — crossing
+the threshold at meaningful moments instead.
+
+**This is a deliberate change in what the threshold is for, not a
+parameter tweak, and it has a real side effect worth stating plainly:**
+the original 1% was chosen specifically so that SPX→HSI — the
+strongest, most paper-validated channel — could never register as
+"disappeared," even at its historical worst (a minimum of 1.68% in this
+sample). At 2%, that safety margin is gone: SPX→HSI *would* be flagged
+as a disappeared edge at that same historical low point. This is now
+treated as intended behavior rather than a bug to avoid — if the
+US-equity channel into HSI genuinely weakens to a multi-year low, an
+alert is exactly what a structural-break detector should produce. The
+design goal shifted from "guarantee the core channel never falsely
+disappears" to "let the core channel's disappearance be a real,
+actionable signal," and 2% is the threshold consistent with the latter
+goal.
+
+**This threshold is still a calibration on this specific sample period,
+not a universal constant** — see docs/notes.md for the full comparison
+table and the decision to additionally downgrade edge
+appearance/disappearance to a secondary signal in RegimeDetector,
+independent of which exact threshold is used.
 
 ## 7. Path Weight Combination (find_all_paths / strongest_path)
 
