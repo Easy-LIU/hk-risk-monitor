@@ -5,3 +5,5 @@ yfinance>=0.2
 streamlit>=1.30
 plotly>=5.18
 pytest>=7.4
+python-dotenv>=1.0
+requests>=2.31
