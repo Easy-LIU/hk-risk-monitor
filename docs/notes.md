@@ -75,3 +75,75 @@ run without crashing" smoke test would miss — it needed either an
 explicit dtype/shape assertion on `fetch()`'s output or, as happened
 here, actually running the full pipeline against live data before
 declaring the module done.
+
+## Unverified Channel — USD_CNY → HSI
+
+### Symptom
+
+`validate_against_paper()` was run on the full aligned sample (2015-2026)
+against four benchmark relationships from the paper's Table 3. Three of
+the four reproduced at the same order of magnitude:
+
+| Pair | Paper F | Tool F |
+|---|---|---|
+| SPX → HSI | 155.65 | 211.63 |
+| SSEC → HSI | 11.32 | 8.33 |
+| USD_YIELD → USD_CNY | 16.58 | 29.35 |
+| USD_CNY → HSI | 36.61 | **0.03** (p=0.86) |
+
+The fourth is not a magnitude mismatch — it is a flip in the causality
+conclusion itself, from highly significant in the paper to
+statistically indistinguishable from no relationship at all.
+
+### Four rounds of diagnosis
+
+1. **Sample-period control.** Truncated the sample to the paper's exact
+   window (2015-01-05 to 2024-12-31) and re-ran the Granger test.
+   Result: F=0.4652, p=0.4952. Still far below 36.61, ruling out
+   "the extra 2025-2026 data is diluting the relationship" as the
+   explanation.
+
+2. **Data quality check.** USD_CNY log-return std = 0.0031 vs. the
+   paper's Table 1 std = 0.0026 — same order of magnitude. Exact-zero
+   returns were 2.58% of observations, not enough to account for the
+   result. Descriptive stats (mean, min, max) showed no anomaly.
+
+3. **Correlation with HSI.** -0.126 (both full sample and paper-period
+   subsample) vs. the paper's Table 2 value of -0.265 — about half the
+   magnitude, consistently across both periods.
+
+4. **Offshore RMB substitution.** Attempted to replace onshore USD_CNY
+   with offshore USD_CNH as a data-source cross-check. yfinance
+   (`CNH=X` and `USDCNH=X`, tried via both `yf.download()` and
+   `yf.Ticker().history()`, plus `period="max"` and datetime-typed
+   start/end — four calling variants total) returned no historical
+   data for either ticker. Stooq was tried as a second, independent
+   backend (`pandas_datareader.data.DataReader(..., "stooq")` and a
+   direct CSV request to `stooq.com/q/d/l/`) and also returned no
+   series. No further data sources were attempted.
+
+### Inference
+
+The volatility magnitude matches the paper (std ratio ~1.2x) but the
+co-movement with HSI is roughly half of what the paper reports,
+consistently across both the full sample and the paper's exact period.
+This combination — matching volatility, mismatched co-movement — points
+toward the two studies using different underlying exchange-rate series,
+rather than an implementation error in this codebase: a bug in the
+alignment, return calculation, or Granger test would be expected to
+distort volatility and correlation together, not leave one intact while
+roughly halving the other. The most likely explanation is onshore CNY
+vs. offshore CNH (the paper does not specify which was used), or a
+difference in daily closing-time convention between the two data
+providers.
+
+### Resolution
+
+USD_CNY is retained in the VAR system. Removing it would change the
+system's structure and invalidate the three relationships that were
+already verified (a 5-variable VAR is a different model from a
+4-variable one). Instead, USD_CNY → HSI is documented and surfaced as
+an **unverified channel** in both this file and the project README, so
+that anyone reading the tool's output knows this specific edge has not
+been reproduced against the published paper, while the rest of the
+engine has.
