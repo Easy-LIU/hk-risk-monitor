@@ -34,6 +34,58 @@ CHINA_DRIVEN_VARIABLES = {"SSEC"}
 IDIOSYNCRATIC_VARIABLES = {"HSI"}
 
 
+def _generalized_fevd(results, horizon: int) -> np.ndarray:
+    """Generalized FEVD (Pesaran & Shin, 1998).
+
+    statsmodels' built-in .fevd() is Cholesky-based, which means it is
+    sensitive to variable ordering: whichever variable is placed first
+    absorbs all contemporaneous correlation with the others, since the
+    Cholesky factorization attributes shared same-period covariance
+    entirely to the first variable in the ordering. HSI and SSEC trade
+    in the same session and move together contemporaneously, so with
+    HSI first this manifested as HSI's own ("idiosyncratic") share
+    absorbing SSEC's true contribution — see docs/notes.md for the
+    diagnostic that found this. GFEVD is order-invariant because it
+    does not orthogonalize the shocks; it decomposes variance using the
+    raw (non-orthogonalized) residual covariance matrix directly.
+
+    Per Diebold-Yilmaz, GFEVD rows do not sum to 1 by construction and
+    must be row-normalized afterward; this function returns the
+    normalized matrix.
+    """
+    sigma_u = np.asarray(results.sigma_u)
+    phi = results.ma_rep(horizon - 1)  # shape (horizon, k, k); phi[0] = identity
+    k = sigma_u.shape[0]
+    sigma_jj = np.diag(sigma_u)
+
+    numerator = np.zeros((k, k))
+    denominator = np.zeros(k)
+    for phi_h in phi:
+        phi_sigma = phi_h @ sigma_u
+        numerator += phi_sigma**2
+        denominator += np.diag(phi_h @ sigma_u @ phi_h.T)
+
+    # Division by zero is expected and handled explicitly below (a
+    # near-zero-variance variable drives sigma_jj/denominator to zero);
+    # suppress numpy's warning since the resulting NaN/inf is checked for.
+    with np.errstate(invalid="ignore", divide="ignore"):
+        theta = numerator / (denominator[:, None] * sigma_jj[None, :])
+        normalized = theta / theta.sum(axis=1, keepdims=True)
+
+    if not np.all(np.isfinite(normalized)):
+        # A near-zero-variance variable (e.g. a degenerate window) drives
+        # sigma_jj or the denominator to zero, which this manual numpy
+        # computation turns into NaN/inf instead of raising the way
+        # statsmodels' own linear algebra calls would. Surface it as the
+        # same kind of numerical-instability failure run_rolling() already
+        # catches, rather than letting NaNs flow silently into the shares.
+        raise ValueError(
+            "Generalized FEVD produced non-finite values, likely due to a "
+            "near-zero-variance variable in this window."
+        )
+    return normalized
+
+
 @dataclass
 class WindowResult:
     """The output of a single rolling window: the full FEVD matrix plus
@@ -109,16 +161,13 @@ class RollingVAREngine:
 
     def fit_window(self, data_slice: pd.DataFrame) -> WindowResult:
         """Fit a VAR(lag) on a single window and decompose HSI's forecast
-        error variance at self.fevd_horizon steps ahead."""
+        error variance at self.fevd_horizon steps ahead, using the
+        order-invariant Generalized FEVD (see _generalized_fevd)."""
         model = VAR(data_slice)
         results = model.fit(self.lag)
 
-        fevd = results.fevd(self.fevd_horizon)
-        # fevd.decomp has shape (target_var, horizon_step, source_var); take
-        # the last horizon step to get the (target, source) matrix at
-        # exactly self.fevd_horizon steps ahead.
-        decomp_at_horizon = fevd.decomp[:, -1, :]
         variables = list(results.names)
+        decomp_at_horizon = _generalized_fevd(results, self.fevd_horizon)
         fevd_matrix = pd.DataFrame(decomp_at_horizon, index=variables, columns=variables)
 
         hsi_row = fevd_matrix.loc[TARGET_VARIABLE]

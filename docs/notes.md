@@ -147,3 +147,79 @@ an **unverified channel** in both this file and the project README, so
 that anyone reading the tool's output knows this specific edge has not
 been reproduced against the published paper, while the rest of the
 engine has.
+
+## Cholesky FEVD ordering sensitivity (found during Day 3, RollingVAREngine)
+
+### Symptom
+
+`fit_window()` was originally implemented using statsmodels' built-in
+`results.fevd(horizon)`, with the five variables in fetch order
+(`HSI, SPX, SSEC, USD_CNY, USD_YIELD`, HSI first). On real data, HSI's
+decomposition came out to US-driven=12.8%, China-driven=0.2%,
+Idiosyncratic=87.0%. The China-driven number was hard to reconcile with
+the paper: Table 2 reports SSEC-HSI as the *highest* pairwise
+correlation in the whole matrix (0.542, higher than SPX-HSI's 0.197),
+yet SSEC's variance contribution to HSI was reported as effectively
+zero.
+
+Reordering the same window's columns to put HSI last (or SSEC first,
+HSI second) and rerunning `fit_window()` produced wildly different
+results from the identical data and identical model:
+
+| Order | US-driven | China-driven | Idiosyncratic |
+|---|---|---|---|
+| HSI first (original) | 12.75% | 0.22% | 87.03% |
+| HSI last | 25.45% | 21.91% | 52.64% |
+| SSEC first, HSI second | 12.85% | 28.42% | 58.73% |
+
+Same window, same VAR fit, same forecast horizon — only the column
+order changed, and China-driven swung between 0.2% and 28.4%.
+
+### Root cause
+
+`statsmodels`' `.fevd()` implements the standard Cholesky-orthogonalized
+FEVD. Cholesky orthogonalization attributes all contemporaneous
+(same-period) covariance between variables to whichever variable comes
+first in the ordering — it treats that first variable's shock as
+"causing" the shared movement, and every later variable's shock as
+independent of it. HSI and SSEC trade in overlapping hours and move
+together contemporaneously (hence the paper's 0.542 correlation). With
+HSI listed first, the Cholesky decomposition assigned essentially all of
+that shared same-day movement to HSI's own shock — which is exactly why
+it showed up as inflated "idiosyncratic" risk instead of as SSEC's
+contribution.
+
+This is a known, textbook property of Cholesky FEVD (ordering
+dependence), not a coding error in the strict sense — but choosing to
+use it, with variables in an arbitrary fetch order, and reporting the
+result as "China-driven risk" without accounting for this, would have
+been a real methodological error in the tool's headline output.
+
+### Fix
+
+Replaced the Cholesky FEVD with the Generalized FEVD (GFEVD, Pesaran &
+Shin 1998), implemented manually in `_generalized_fevd()` since
+`statsmodels` does not provide it directly. GFEVD does not orthogonalize
+the shocks, so it does not privilege whichever variable happens to be
+listed first; it decomposes variance using the raw residual covariance
+matrix directly. Verified order-invariance by rerunning the same window
+under all three orderings above — all three now produce identical
+results (US-driven=19.81%, China-driven=19.74%, Idiosyncratic=60.45%).
+
+One implementation detail: GFEVD rows do not sum to 1 by construction
+(each row is normalized separately per Diebold-Yilmaz's standard
+treatment).
+
+### Why this bug was dangerous
+
+Unlike the yfinance MultiIndex bug, this one never crashed and never
+looked obviously wrong in isolation — 87% idiosyncratic risk is a
+plausible-looking number for a small open equity market, not an
+obvious red flag. It was caught only because a domain expert (the
+paper's author) noticed the FEVD result was inconsistent with a
+different, already-validated statistic (the correlation matrix) from
+the same paper. Without that cross-check against an independent ground
+truth, this would have shipped as the tool's headline "China-driven"
+number, silently determined by an arbitrary implementation detail (the
+order columns happened to come back from `MarketDataLoader.fetch()`)
+rather than by the actual economics of the data.

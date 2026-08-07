@@ -11,7 +11,11 @@ testing (ADF).
 **RollingVAREngine** fits a VAR model on each rolling window and computes
 FEVD (Forecast Error Variance Decomposition) to quantify what percentage
 of HSI's forecast error variance is attributable to each other market.
-It also includes `validate_against_paper()`, which runs a full-sample
+It uses the **Generalized FEVD** (Pesaran & Shin, 1998), not the
+Cholesky-orthogonalized FEVD `statsmodels` provides out of the box,
+because Cholesky FEVD's result depends on variable ordering — see
+docs/notes.md for the diagnostic that found this the hard way. It also
+includes `validate_against_paper()`, which runs a full-sample
 (non-rolling) fit and compares the resulting Granger causality
 F-statistics against the published paper's Table 3 results as a
 correctness check.
