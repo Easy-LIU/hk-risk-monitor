@@ -143,8 +143,22 @@ src/
   — matrix subtraction handles diff in one line and is cache-friendly. Be
   ready to explain this reasoning in an interview.
 
-- **RegimeDetector tracks three signal types**: share jumps, edge
-  appearance/disappearance, and centrality rank flips.
+- **RegimeDetector tracks three signal types**: share jumps (primary),
+  edge appearance/disappearance (secondary), and centrality rank flips.
+  - **Share jumps** track the three dashboard headline numbers —
+    US-driven / China-driven / Idiosyncratic — not individual raw edge
+    weights. The test for what belongs in the primary signal: "if this
+    number changes, does anyone change what they do?" US-driven moving
+    from 35% to 70% means a hedger should re-evaluate their hedge ratio
+    — that's a decision-relevant number. A single raw edge like
+    SSEC→USD_YIELD jumping does not map to any hedging decision on its
+    own; putting every one of the 20 raw edges into the primary signal
+    would just reproduce the same problem edge appearance/disappearance
+    already ran into (see docs/notes.md's Day 5 threshold check) —
+    technically real, not actionable. Individual edge structure is
+    already covered by the other two signals (threshold crossings, and
+    which of SPX/SSEC is the dominant source), so the primary signal
+    doesn't need to duplicate that at the raw-edge level.
   - **Centrality rank flip** detects when the dominant risk source
     switches between SPX and SSEC. Business rationale: hedging
     instrument choice is a discrete decision (US-linked vs. China-linked

@@ -84,3 +84,39 @@ US-equity-driven / US-rates-and-FX-driven / China-driven / Idiosyncratic
 implemented in order to keep the dashboard to three headline numbers;
 revisiting it would trade frontend simplicity for attribution
 precision.
+
+### Sample Start Date and Extending the History
+
+This tool's sample starts in 2015 — not because earlier data is
+unavailable, but because the market structure it measures did not
+exist in its current form before then. Stock Connect (the direct
+cross-border trading link between HK and mainland exchanges) launched
+in phases: Shanghai-HK Connect in November 2014, Shenzhen-HK Connect in
+December 2016. Before Stock Connect, there was no direct capital
+channel between mainland and HK equity markets for this tool to
+measure. Separately, the August 2015 "811" RMB reform fundamentally
+changed how the USD_CNY midpoint is set. A transmission-attribution
+tool run across that boundary would be mixing two structurally
+different regimes into one VAR, not just adding more data points.
+
+Extending the sample further back (e.g. to include the 2008 financial
+crisis) would help address the in-sample threshold-calibration
+circularity noted in docs/notes.md (a longer, more event-rich history
+gives percentile-based thresholds more independent extreme events to be
+calibrated against) — but doing so responsibly would require treating
+2008-2014 and 2015-present as structurally distinct regimes, likely
+via segmented modeling, rather than pooling them into a single rolling
+window that crosses the Stock Connect / 811 reform boundary.
+
+### Out-of-Sample Threshold Calibration
+
+Both `SpilloverNetwork.EDGE_THRESHOLD` and `RegimeDetector`'s
+percentile-based acute threshold are calibrated using percentiles of
+the full historical sample — which means events like COVID that sit
+inside that same sample partly define the bar they are then evaluated
+against (see docs/notes.md's "three-layer conclusion" on RegimeDetector
+for the fullest discussion of this circularity). A more rigorous design
+would calibrate out-of-sample: an expanding window (using only data
+available up to each historical point in time) or a rolling percentile,
+so a threshold is never partly defined by the event it is later used to
+flag. Not implemented in this pass.

@@ -323,3 +323,209 @@ appearance/disappearance as *secondary*) — the data confirms that
 initial instinct rather than overturning it. RegimeDetector treats edge
 appearance/disappearance as a secondary/supporting signal, not a
 standalone trigger.
+
+## RegimeDetector first run on full history (Day 5)
+
+`RegimeDetector(threshold_pp=4.0, lookback=5)`, calibrated per section 8
+of docs/design.md, run once against the full 2015-2026 rolling series
+(2387 windows). **This is the first-run result, unmodified — no
+parameters were adjusted after seeing it.**
+
+### Totals
+
+| Signal | Count |
+|---|---|
+| edge_change (secondary) | 1719 |
+| share_jump (primary) | 62 |
+| centrality_flip | 28 |
+| **Total** | **1809** |
+
+62 primary-signal alerts over ~11.5 years is roughly 5-6/year — a
+plausible "worth a look" cadence rather than either silence or noise.
+
+### Known-event check (looked at after the run, not used to tune it)
+
+| Event | Window | Primary signal (share_jump) | Secondary (edge_change) |
+|---|---|---|---|
+| 2020 COVID | 2020-02-15 to 2020-04-15 | **Hit.** Multiple alerts; largest is 2020-03-09, US-driven +8.26pp over 5 windows (20.9%→29.2%) — one of the largest share_jump magnitudes in the entire history. Further alerts through 2020-03-20/23/27. | Also active |
+| 2018 trade war | 2018-06-15 to 2018-08-15 | **Miss.** Zero share_jump alerts in this window. | 32 edge_change alerts (mostly USD_YIELD↔HSI edges appearing/disappearing) |
+| 2022 rate hikes | 2022-02-01 to 2022-04-30 | **Near-miss.** Exactly 1 share_jump alert (2022-03-16, Idiosyncratic -4.2pp) out of 99 total alerts in the window. | 98 edge_change alerts |
+
+COVID is a genuine hit; the trade war is a genuine miss (not a
+near-threshold near-miss — zero primary alerts in the entire two-month
+window); rate hikes barely register on the primary signal. Per the
+project's standing rule, threshold_pp/lookback were not adjusted to try
+to make the trade war or rate-hike periods show up — this is reported
+as-is, including the negative result. See the "lookback experiment"
+section below for a hypothesis-driven follow-up, not a parameter hunt.
+
+## Lookback experiment: does a longer window catch gradual regime change?
+
+### Hypothesis
+
+The primary signal (`lookback=5`) measures a jump within one calendar
+week. COVID was a sudden shock and fits that definition; the 2018 trade
+war and 2022 rate-hike cycle were both multi-month processes. Hypothesis:
+a 5-day window structurally cannot detect gradual drift, regardless of
+`threshold_pp`, because a slow accumulation may never move more than
+`threshold_pp` within any single 5-day slice even while moving far more
+than that over months. This has a falsifiable prediction: a longer
+`lookback` (same `threshold_pp=4.0`, only `lookback` changed) should
+detect the trade war / rate-hike periods if the hypothesis is correct,
+and should still miss them if it is wrong.
+
+### Method
+
+`RegimeDetector(threshold_pp=4.0, lookback=20)` and
+`RegimeDetector(threshold_pp=4.0, lookback=60)`, each run once against
+the same full rolling series. Only `lookback` was changed; `threshold_pp`
+held fixed. Each was run exactly once and reported — not iterated
+against the trade-war/rate-hike window to search for a value that "works."
+
+### Result (exploratory — threshold_pp reused, not yet recalibrated)
+
+| lookback | Total alerts | share_jump alerts | Trade war hits | Rate hikes hits |
+|---|---|---|---|---|
+| 5 (original) | 1809 | 62 | 0 | 1 |
+| 20 | 4297 | 366 | 2 | 16 |
+| 60 | 8828 | 1572 | 51 | 45 |
+
+At `lookback=60`, the trade war window produced a strikingly clean
+signature: China-driven share rose from ~16% to ~25% in a steady,
+nearly monotonic climb across the entire June-August 2018 window — not
+noise, a sustained drift. **Hypothesis mechanically confirmed**: a
+longer lookback can detect gradual drift a 5-day window structurally
+cannot.
+
+**But this result reused `threshold_pp=4.0`, which was calibrated for
+the 5-day distribution, not the 60-day one.** At `lookback=60`, 1572
+share_jump alerts over 2387 windows is ~66% of all windows — far too
+frequent to serve as a "regime change" signal on its own. The 4.0pp bar
+that was rare at 5 days is common at 60 days, because ordinary drift
+accumulates further over a longer horizon. This result established that
+long-lookback detection is *possible*, but not that `threshold_pp=4.0`
+was the right bar for it — see the calibration and episode-aggregation
+work below.
+
+## Dual-timescale RegimeDetector: calibration journey and final result
+
+Two things were added after the lookback experiment above: (1) episode
+aggregation, so a sustained drift produces one dated event instead of
+one alert per day it stays past threshold, and (2) a properly
+independent calibration of the chronic (60-day) threshold, rather than
+reusing the acute (5-day) threshold as the exploratory run above did.
+The chronic threshold went through two calibration attempts before
+landing on the final one; both are recorded here because the first
+one's result — and specifically what changed between it and the
+second — is itself informative.
+
+### Attempt 1: same rule as acute (p99 of the 60-day distribution)
+
+Following the same method used for `acute_threshold_pp` (percentile of
+`|share(t) - share(t-lookback)|`): at `lookback=60`, p99 was 9.62pp
+(us_share), 8.05pp (china_share), 11.97pp (idio_share).
+`chronic_threshold_pp=9.5` was set from this.
+
+**Result: only COVID cleared this bar, at either timescale.** The 2018
+trade war's actual china_share drift topped out at +7.98pp over 60
+days — real, sustained, but short of a strict, self-referential "top 1%
+of this sample's 60-day moves" cutoff. The 2022 rate-hike period's
+moves were similarly short of 9.5pp. Both the trade war and rate-hike
+detections from the exploratory (threshold=4.0) run above disappeared
+once the threshold was calibrated rigorously.
+
+### Attempt 2 (final): business-frequency calibration
+
+The p99 rule was appropriate for the acute signal because, before
+episode aggregation existed, a low bar meant alert flooding — the whole
+point of picking something rare was to keep the log usable. **Episode
+aggregation removes that constraint for the chronic signal**: a
+sustained drift now produces one dated event regardless of how many
+raw days it spans, so the threshold no longer needs to be pushed high
+just to keep alert *volume* down. What it should instead target is
+whether the resulting *episode frequency* matches how often a risk desk
+would plausibly want a "reconsider the hedge" prompt — a business
+question, not a statistical-rarity question. See docs/design.md section
+9 for the full reasoning.
+
+Candidate thresholds were run once each and their resulting chronic
+episode frequency measured (10.51-year sample):
+
+| threshold_pp | chronic episodes | episodes/year |
+|---|---|---|
+| 5.0 | 94 | 8.95 |
+| 5.5 | 79 | 7.52 |
+| 6.0 | 60 | 5.71 |
+| 6.5 | 49 | 4.66 |
+| **7.0** | **41** | **3.90** |
+| 7.5 | 34 | 3.24 |
+| 8.0 | 35 | 3.33 |
+
+`chronic_threshold_pp=7.0` was chosen as the value landing cleanly
+inside a target range of 3-5 episodes/year (a plausible cadence for a
+periodic hedge-allocation review), then run once, final, without
+further adjustment regardless of what it did or didn't detect.
+
+### Final result (chronic_threshold_pp=7.0, acute_threshold_pp=4.0 unchanged)
+
+| Signal | Count |
+|---|---|
+| edge_change (secondary) | 1719 |
+| share_jump episodes, acute | 26 |
+| share_jump episodes, chronic | 41 |
+| centrality_flip | 28 |
+| **Total** | **1814** |
+
+| Event | Acute | Chronic |
+|---|---|---|
+| 2020 COVID | Hit — multiple episodes, e.g. US-driven 16.3%→25.9% over 2020-03-09 to 03-17 (+9.5pp, 7 trading days) | Hit — same window, plus an earlier +7.6pp single-day episode on 2020-02-24 |
+| 2018 trade war | Miss | **Hit** — 3 episodes, all China-driven, e.g. 17.0%→24.6% over 2018-08-14 to 08-20 (+7.5pp, 5 trading days) |
+| 2022 rate hikes | 1 episode (2022-03-16, Idiosyncratic -4.2pp) | 2 episodes, both starting 2022-04-28 (US-driven +7.0pp, Idiosyncratic -7.8pp) — a few days after this project's nominal window end (04-30), not cut to fit |
+
+This is the actual, final, unmodified result of the last threshold
+tested. No further tuning was done after this run.
+
+## Three-layer conclusion
+
+**(a) Fact.** Under a strict, self-referential p99 calibration (the
+"top 1% of this 10.5-year sample's own 60-day moves"), only COVID
+clears the bar at either timescale; the trade war's largest 60-day
+china_share move (7.98pp) and the rate-hike period's moves fall short.
+Under a business-frequency calibration targeting 3-5 chronic episodes
+per year, the trade war is detected (3 episodes) and the rate-hike
+period is partially detected (2 episodes, at its tail end).
+
+**(b) Interpretation.** This is not "the p99 calibration was too
+strict" as a criticism — p99 correctly measured what it was built to
+measure. The deeper point: **a well-known news event and a statistical
+anomaly in risk-attribution structure are two different things, and
+this tool measures the second one, not the first.** COVID was a global,
+simultaneous market freeze — an acute shock, and it registers as
+extreme by construction. The trade war was a policy process that
+markets priced in gradually over months through escalating tariff
+announcements and retaliation cycles — real and economically
+significant, but a smaller-magnitude, slower-moving shift in HSI's risk
+attribution structure specifically, not a discontinuity of COVID's
+scale. A regime-change detector that measures transmission-structure
+anomalies is not the same instrument as a "was this in the news" check,
+and conflating the two would be a category error.
+
+**(c) Methodological limitation (important, not a footnote).** The p99
+calibration is in-sample: COVID itself is part of the 10.5-year sample
+used to define "what counts as the top 1%," so COVID partly defines the
+bar it then passes — circular by construction. This is a real limit on
+how much the p99-based acute threshold's rarity claim should be trusted
+as evidence of genuine tail-event detection, as opposed to "detects
+things at least as extreme as the most extreme thing already in the
+training data." A more rigorous approach would calibrate out-of-sample
+— e.g. an expanding window (calibrate only on data available up to each
+point in time) or a rolling percentile — so a threshold is never partly
+defined by the event it's being asked to detect. Not implemented in
+this pass; see README Future Work.
+
+## Note for Day 6 frontend
+
+`edge_change` is 1719 of 1814 total alerts (95%). The default alert
+view must show only `share_jump` episodes and `centrality_flip` —
+`edge_change` belongs in a collapsed section or separate tab, or it
+will drown out the primary signal entirely.

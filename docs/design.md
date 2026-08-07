@@ -268,3 +268,197 @@ built on: there is no real quantity that "0.3 (A's contribution to B)
 plus 0.4 (B's contribution to C)" corresponds to. Multiplication
 preserves an interpretation (a compounding transmission efficiency,
 analogous to combining two conditional shares); addition does not.
+
+## 8. RegimeDetector Signal Definitions and Parameter Calibration
+
+### What "weight jump" tracks
+
+The primary signal tracks the three dashboard headline numbers —
+`us_share`, `china_share`, `idio_share` from `WindowResult` — not raw
+edge weights from the underlying 5x5 FEVD matrix. This was an
+inconsistency in earlier drafts of this project's docs (CLAUDE.md's
+prose example and this file's original phrasing implied a raw edge,
+e.g. "SPX→HSI jumping from 30% to 70%," while the original wireframe's
+example — "US份额 45%→71%" — was always about the aggregated headline).
+Resolved in favor of the aggregated headline, using one test: **if this
+number changes, does anyone change what they do?** `us_share` moving
+from 35% to 70% is the example CLAUDE.md's decision-scenario table
+already uses to explain when a hedger should re-evaluate their hedge
+ratio — a decision-relevant number. A single raw edge like
+SSEC→USD_YIELD jumping does not correspond to any hedging decision by
+itself. Making every one of the 20 raw edges part of the primary signal
+would reproduce the exact problem edge appearance/disappearance already
+had (section 6 above, and the Day 5 result in docs/notes.md): technically
+real movement that maps to no action. Raw edge-level structure is
+already covered by the other two signals (edge threshold crossings, and
+which of SPX/SSEC dominates), so the primary signal does not need to
+re-cover that ground.
+
+`scan()` therefore takes `list[WindowResult]`, not
+`list[SpilloverNetwork]` — `SpilloverNetwork` has no date field, and
+`Alert` needs one, so a `SpilloverNetwork`-only signature could not have
+produced dated alerts in the first place. `SpilloverNetwork` objects are
+constructed internally from each `WindowResult.fevd_matrix` wherever the
+edge-level signals need them.
+
+### Parameter calibration: threshold_pp and lookback
+
+Both parameters were set by looking at the real distribution of
+`|share(t) - share(t-lookback)|` across the full 2015-2026 rolling
+series (2386 windows), the same method used for `EDGE_THRESHOLD` in
+section 6 — not guessed.
+
+`lookback=5` (trading days, about a calendar week) was kept from the
+original wireframe's framing ("5日内") and matches the horizon a hedger
+would plausibly re-check a position on.
+
+At `lookback=5`, the percentile table for each headline share was:
+
+| Percentile | us_share | china_share | idio_share |
+|---|---|---|---|
+| p50 | 0.38pp | 0.31pp | 0.35pp |
+| p90 | 1.32pp | 1.14pp | 1.28pp |
+| p95 | 1.97pp | 1.65pp | 1.93pp |
+| p99 | 4.32pp | 2.97pp | 4.50pp |
+| p99.9 | 8.23pp | 4.12pp | 11.18pp |
+| max | 9.75pp | 4.90pp | 11.64pp |
+
+`threshold_pp=4.0` was chosen to sit close to the 99th percentile for
+`us_share` and `idio_share` — i.e. a genuinely rare event in this
+sample, consistent with treating this as a structural-break signal
+rather than routine noise (the same "too frequent to be meaningful"
+standard that got edge appearance/disappearance demoted to secondary in
+section 6). The same numeric threshold is applied to all three shares
+rather than a separate threshold per share, which has a real,
+data-driven consequence worth stating rather than hiding: `china_share`
+is structurally calmer in this sample (p99 = 2.97pp, below the 4.0pp
+threshold entirely), so it will fire far less often than `us_share` or
+`idio_share` under the same cutoff. That is read as a fact about this
+sample (China-driven risk moved less dramatically over 5-day windows
+than the US-driven or idiosyncratic components did, 2015-2026), not as
+a flaw in using one shared threshold.
+
+As with `EDGE_THRESHOLD`, known stress periods (2018 trade war, 2020
+COVID, 2022 rate hikes) were checked *after* the parameters were fixed
+from the percentile table above, not used to tune them — see
+docs/notes.md for what `RegimeDetector.scan()` actually produced on the
+full history, reported as-is.
+
+## 9. Dual-Timescale Share Jumps and Episode Aggregation
+
+### Why two timescales
+
+A single `lookback=5` share-jump signal caught COVID (a sudden shock)
+but missed the 2018 trade war and largely missed the 2022 rate-hike
+cycle — both multi-month processes, not discrete jumps. A
+sensitivity experiment (docs/notes.md) confirmed the mechanism: a
+5-day window structurally cannot detect a change that accumulates
+gradually over months, no matter how `threshold_pp` is set, because the
+change per 5-day slice can stay small even while the cumulative change
+over the full period is large.
+
+The fix is not to replace the 5-day signal with a longer one, but to
+run both:
+
+- **acute** (`lookback=5`): a sudden shock. Business framing: re-evaluate
+  the hedge ratio *now*.
+- **chronic** (`lookback=60`, ~1 quarter): a sustained drift. Business
+  framing: flag for the next periodic hedge-allocation review, not an
+  immediate action.
+
+Both are share-jump signals with the same mechanism (compare
+`WindowResult` shares `lookback` windows apart against a threshold);
+they differ only in `lookback` and — necessarily — in `threshold_pp`,
+since a bar calibrated for a 5-day distribution is not the right bar
+for a 60-day one (60-day moves are naturally larger; see the acute vs.
+chronic percentile tables in docs/notes.md).
+
+### Episode aggregation
+
+A sustained drift crosses the threshold on every day it stays past it,
+so `lookback=60` alone produced 1572 raw share_jump crossings — not
+because the underlying signal is noisy, but because one real,
+multi-week drift was being reported as dozens of near-duplicate daily
+alerts. `RegimeDetector` now collapses consecutive (by trading-day
+index), same-share, same-direction crossings into a single episode:
+start date, end date, net change, and duration in trading days (e.g.
+"China-driven share drifted 17.0% → 24.6% over 2018-08-14 to 2018-08-20,
++7.5pp, 5 trading days"), instead of one alert per day. This is not
+cosmetic deduplication — it changes what a `share_jump` alert *means*:
+one alert now corresponds to one real event, not one day of an ongoing
+event.
+
+### Chronic threshold: from percentile calibration to frequency calibration
+
+The acute threshold (section 8, unchanged) is calibrated by percentile
+(p99 of the 5-day distribution) because, without episode aggregation
+protecting it, a low bar meant runaway alert volume — rarity was doing
+double duty as both "statistically meaningful" and "keeps the log
+usable." Once episode aggregation exists, that second job is no longer
+the threshold's to do: a sustained drift is one episode no matter how
+low the bar is set, so volume is no longer the constraint.
+
+This was tested directly. A first attempt calibrated the chronic
+threshold the same way as acute — p99 of the 60-day distribution,
+giving `chronic_threshold_pp=9.5`. Under that bar, only COVID cleared
+it at either timescale; the trade war's largest 60-day move (7.98pp)
+and the rate-hike period's moves both fell short of a threshold defined
+as "the top 1% of this same sample's own 60-day moves." This is not a
+sign the trade war didn't matter — see docs/notes.md's "three-layer
+conclusion" for why a real, economically coherent, sustained shift can
+still fail a strict self-referential rarity bar, and why that is a
+meaningful distinction (news event vs. statistical anomaly in
+transmission structure) rather than a threshold that needs to be forced
+higher or lower until a known event shows up.
+
+**The chronic threshold is instead calibrated by target business
+frequency**, not percentile: candidate thresholds were tested once each
+and the resulting *episode count per year* measured, targeting 3-5
+chronic episodes/year — a plausible cadence for periodic hedge-review
+prompting. `chronic_threshold_pp=7.0` (3.90 episodes/year over the
+10.5-year sample) was selected on that basis and run once, final,
+regardless of which known events it did or didn't flag. It happened to
+detect the trade war (3 episodes) and partially detect the rate-hike
+period (2 episodes, at its tail end) — a result, not a selection
+criterion.
+
+The acute threshold keeps the percentile rule (section 8) unchanged: an
+acute, sudden shock *should* be rare by construction, so "top 1% of
+5-day moves" is the right kind of bar for it. Only the chronic
+threshold's calibration method changed, and only because episode
+aggregation removed the reason percentile-based rarity was needed there
+in the first place.
+
+### The dual-timescale design holds regardless of chronic's hit rate
+
+`chronic_threshold_pp` and `chronic_lookback` are constructor
+parameters, not hardcoded — a user with a different risk tolerance can
+adjust them. The architectural claim this section defends is narrower
+and does not depend on any specific threshold's hit rate: acute shocks
+and chronic drift are genuinely different phenomena that a single
+lookback cannot both serve, and a tool meant to support both an
+immediate hedge re-evaluation and a periodic portfolio review needs a
+signal for each.
+
+## 10. Planned: Historical Event Annotations (Day 6 frontend)
+
+The share-history line chart will overlay reference markers (vertical
+lines + labels) for well-known macro events, so a user can visually see
+how the three headline shares behaved during past stress periods and
+calibrate their expectations for a similar future scenario.
+
+**This is an annotation layer, not a detection output, and the two must
+stay visibly distinct in both the UI and any accompanying text.** The
+event markers are a hand-maintained reference list curated from
+standard macro chronology (e.g. the COVID market crash, the US-China
+trade war escalation, the start of the Fed's 2022 hiking cycle, the
+811 RMB reform) — never selected because a particular date happens to
+line up with an interesting-looking move in the chart. `RegimeDetector`
+is the tool's actual detector; the annotation list exists to give the
+detector's output a historical reference frame, not to imply the tool
+"found" these dates itself. Wording in the UI ("reference events," not
+"detected events") and in the README must not blur this line.
+
+Implementation: the event list lives in its own config (e.g.
+`src/events.py` or a JSON file), separate from the plotting code, so it
+can be reviewed and extended independently of chart logic.
