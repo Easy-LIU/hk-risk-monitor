@@ -1,13 +1,10 @@
-"""Rolling VAR / FEVD engine for the HK Equity Risk Attribution Monitor.
-
-Day 3, step 1: only validate_against_paper() is implemented here. The
-rolling window logic (fit_window / run_rolling) is added only after this
-full-sample validation confirms the engine reproduces the published
-paper's Granger causality results at the right order of magnitude.
-"""
+"""Rolling VAR / FEVD engine for the HK Equity Risk Attribution Monitor."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+import numpy as np
 import pandas as pd
 from statsmodels.tsa.api import VAR
 
@@ -24,14 +21,46 @@ PAPER_TABLE_3 = {
     ("USD_YIELD", "USD_CNY"): 16.58,
 }
 
+TARGET_VARIABLE = "HSI"
+
+# FEVD attribution grouping for the dashboard's three headline shares.
+# USD_CNY is grouped under US-driven, not China-driven — see
+# docs/design.md section 5 for the rationale: validate_against_paper()
+# shows USD_YIELD -> USD_CNY is a strong, verified channel, so USD_CNY's
+# variation is substantially a downstream effect of US monetary policy
+# rather than an independent China-side shock.
+US_DRIVEN_VARIABLES = {"SPX", "USD_YIELD", "USD_CNY"}
+CHINA_DRIVEN_VARIABLES = {"SSEC"}
+IDIOSYNCRATIC_VARIABLES = {"HSI"}
+
+
+@dataclass
+class WindowResult:
+    """The output of a single rolling window: the full FEVD matrix plus
+    HSI's decomposition rolled up into the three dashboard categories."""
+
+    date: pd.Timestamp
+    fevd_matrix: pd.DataFrame  # rows=target variable, cols=source variable, each row sums to 1.0
+    us_share: float
+    china_share: float
+    idio_share: float
+
 
 class RollingVAREngine:
     """Fits VAR models on the five aligned market-return series."""
 
-    def __init__(self, window: int = 250, step: int = 1, lag: int = 1):
+    def __init__(
+        self,
+        window: int = 250,
+        step: int = 1,
+        lag: int = 1,
+        fevd_horizon: int = 10,
+    ):
         self.window = window
         self.step = step
         self.lag = lag
+        self.fevd_horizon = fevd_horizon
+        self._rolling_report: dict | None = None
 
     def validate_against_paper(self, returns: pd.DataFrame) -> dict:
         """Fit a single VAR(lag) model on the full sample (no rolling) and
@@ -77,3 +106,63 @@ class RollingVAREngine:
         comparison = pd.DataFrame(comparison_rows)
 
         return {"all_pairs": all_pairs, "comparison": comparison}
+
+    def fit_window(self, data_slice: pd.DataFrame) -> WindowResult:
+        """Fit a VAR(lag) on a single window and decompose HSI's forecast
+        error variance at self.fevd_horizon steps ahead."""
+        model = VAR(data_slice)
+        results = model.fit(self.lag)
+
+        fevd = results.fevd(self.fevd_horizon)
+        # fevd.decomp has shape (target_var, horizon_step, source_var); take
+        # the last horizon step to get the (target, source) matrix at
+        # exactly self.fevd_horizon steps ahead.
+        decomp_at_horizon = fevd.decomp[:, -1, :]
+        variables = list(results.names)
+        fevd_matrix = pd.DataFrame(decomp_at_horizon, index=variables, columns=variables)
+
+        hsi_row = fevd_matrix.loc[TARGET_VARIABLE]
+        us_share = hsi_row[hsi_row.index.isin(US_DRIVEN_VARIABLES)].sum()
+        china_share = hsi_row[hsi_row.index.isin(CHINA_DRIVEN_VARIABLES)].sum()
+        idio_share = hsi_row[hsi_row.index.isin(IDIOSYNCRATIC_VARIABLES)].sum()
+
+        return WindowResult(
+            date=data_slice.index[-1],
+            fevd_matrix=fevd_matrix,
+            us_share=us_share,
+            china_share=china_share,
+            idio_share=idio_share,
+        )
+
+    def run_rolling(self, returns: pd.DataFrame) -> list[WindowResult]:
+        """Slide a self.window-sized window across returns, self.step days
+        at a time, calling fit_window() on each. Numerically unstable
+        windows are skipped rather than aborting the run; see
+        get_rolling_report() for how many were skipped."""
+        window_starts = list(range(0, len(returns) - self.window + 1, self.step))
+
+        results: list[WindowResult] = []
+        failures: list[dict] = []
+        for start in window_starts:
+            window_slice = returns.iloc[start : start + self.window]
+            try:
+                results.append(self.fit_window(window_slice))
+            except (np.linalg.LinAlgError, ValueError) as exc:
+                failures.append({"date": window_slice.index[-1], "error": str(exc)})
+
+        total_windows = len(window_starts)
+        self._rolling_report = {
+            "total_windows": total_windows,
+            "successful_windows": len(results),
+            "failed_windows": len(failures),
+            "failure_rate": len(failures) / total_windows if total_windows else 0.0,
+            "failures": failures,
+        }
+        return results
+
+    def get_rolling_report(self) -> dict:
+        if self._rolling_report is None:
+            raise RuntimeError(
+                "run_rolling() must be called before get_rolling_report()."
+            )
+        return self._rolling_report

@@ -9,6 +9,26 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+## Engineering Decisions
+
+### FEVD horizon = 10
+
+The rolling engine decomposes forecast error variance 10 steps ahead
+(`fevd_horizon=10`, exposed as a constructor parameter). Reasons for
+this choice:
+
+- It matches the standard horizon used in the Diebold-Yilmaz spillover
+  index literature, so the tool's output is comparable to existing
+  published spillover studies rather than an arbitrary one-off choice.
+- 10 trading days is about two calendar weeks — a reasonable window for
+  cross-market transmission to fully play out, long enough to capture
+  indirect effects but short enough to still describe a "current"
+  regime rather than a multi-month average.
+- Under the fitted VAR(1), transmission effects decay quickly with each
+  additional lag step, so horizons beyond 10 (e.g. 20) produce
+  materially the same decomposition — 10 is not an undershoot of where
+  the decomposition stabilizes.
+
 ## Limitations
 
 The USD_CNY → HSI channel could not be validated against the paper: the
@@ -53,3 +73,14 @@ to PBOC central parity management and largely inaccessible to
 offshore participants. Substituting CNH would require a paid data
 source (Bloomberg, Refinitiv, or CEIC); no free provider tested
 offers daily historical CNH spot.
+
+### FX as a Separate Fourth Attribution Category
+
+The current grouping folds USD_CNY into US-driven alongside SPX and
+USD_YIELD (see docs/design.md section 5 for the rationale). A more
+granular decomposition would split out FX as its own fourth category —
+US-equity-driven / US-rates-and-FX-driven / China-driven / Idiosyncratic
+— rather than merging the rates and FX channels together. This was not
+implemented in order to keep the dashboard to three headline numbers;
+revisiting it would trade frontend simplicity for attribution
+precision.

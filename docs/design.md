@@ -144,3 +144,32 @@ requires first aligning node sets between the two graphs and then
 matching and subtracting edge weights pair by pair — more code, and more
 opportunities for bugs (e.g. mishandling an edge that exists in one
 network but not the other).
+
+## 5. FEVD Attribution Grouping
+
+HSI's forecast error variance decomposition produces a share for each of
+the five variables (HSI itself, SPX, SSEC, USD_CNY, USD_YIELD). The
+dashboard's three headline numbers — US-driven, China-driven,
+Idiosyncratic — are these five shares rolled up into three groups. The
+grouping is:
+
+- **US-driven = SPX + USD_YIELD + USD_CNY**
+- **China-driven = SSEC**
+- **Idiosyncratic = HSI** (HSI's own shock)
+
+The non-obvious call here is putting USD_CNY under US-driven rather than
+China-driven. USD_CNY is the RMB exchange rate, so grouping it with SSEC
+under "China-driven" is the intuitive first guess — but
+`validate_against_paper()` shows USD_YIELD → USD_CNY is a highly
+significant channel (paper F=16.58; this tool reproduces it at F=29.35,
+same order of magnitude). That result says USD_CNY's day-to-day
+variation is substantially driven by US monetary policy (the 10-year
+Treasury yield) flowing through the exchange rate, not by an independent
+China-side shock. If USD_CNY's FEVD share were counted as China-driven,
+a USD-originated move that transmits through the RMB channel into HSI
+would get recorded as Chinese risk — the tool would systematically
+overstate China's share and understate the US's, exactly in the cases
+where the US channel is operating indirectly rather than directly
+through SPX. Grouping USD_CNY with US-driven keeps the attribution
+consistent with the verified causal structure rather than with the
+variable's surface-level geography.
