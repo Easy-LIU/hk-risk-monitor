@@ -223,3 +223,37 @@ truth, this would have shipped as the tool's headline "China-driven"
 number, silently determined by an arbitrary implementation detail (the
 order columns happened to come back from `MarketDataLoader.fetch()`)
 rather than by the actual economics of the data.
+
+### Reconciling Granger causality and GFEVD on SPX vs. SSEC
+
+`validate_against_paper()`'s Granger results rank SPX far above SSEC as
+a driver of HSI (F=211.63 vs. F=8.33). The rolling engine's GFEVD result
+gives them comparable weight (SPX ≈ 16-20%, SSEC ≈ 19-20% depending on
+the window). These are not in conflict — they are measuring different
+transmission mechanisms, and the difference is informative rather than
+a bug:
+
+- **Granger causality tests lagged predictive power**: does yesterday's
+  value of X help predict today's value of Y, beyond what Y's own past
+  already predicts. HSI closes at 16:00 HKT, before the US market opens
+  at 22:30 HKT the same calendar day — so SPX's lag-1 term genuinely
+  captures "last night's US close → this morning's HK open," a real
+  temporal lead (see the timezone discussion in CLAUDE.md). This is
+  exactly the kind of relationship Granger causality is built to detect.
+
+- **GFEVD includes contemporaneous (same-period) covariance**: HSI and
+  SSEC trade in overlapping hours on the same calendar day, so a
+  same-day shock hitting both markets shows up as a strong
+  contemporaneous co-movement — which is precisely what the paper's
+  correlation table also captures (SSEC-HSI at 0.542, the highest pair
+  in Table 2). Granger causality, by definition, only looks at whether
+  *past* values predict *future* values; it structurally cannot detect
+  a same-day, same-session co-movement, because there is no lag between
+  the two markets' trading hours for it to exploit.
+
+So SPX's strength shows up in Granger (a real lagged, next-morning
+effect) while SSEC's strength shows up in GFEVD (a real same-session
+co-movement effect). Neither measure is wrong; they answer different
+questions about how the two markets are connected to HSI, and a tool
+that only reported one of them would be missing half of the actual
+transmission structure.

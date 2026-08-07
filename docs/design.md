@@ -92,11 +92,17 @@ Streamlit frontend (app.py)
 Two points worth calling out explicitly:
 
 1. `precompute.py` exists as a standalone step, separate from the
-   frontend. This is the solution to the ~30-45 second rolling
-   computation cost identified earlier: the full pipeline runs once,
-   offline, and writes its output to a cache file. The frontend only
-   reads that cache, so dragging the time slider never triggers a
-   half-minute recomputation.
+   frontend. The point of precomputing and caching is zero-latency
+   frontend interaction: dragging the time slider should never trigger
+   a recomputation, regardless of how long the rolling pipeline
+   actually takes. In practice, a full 2386-window rolling run
+   (window=250, step=1, 2015-2026) measured at ~6 seconds — faster
+   than the ~30-45 second estimate made before the engine was
+   implemented. The precompute/cache split was the right call
+   independent of that number: even at 6 seconds, recomputing on every
+   slider drag would still be a bad interaction, so the full pipeline
+   runs once, offline, and writes its output to a cache file that the
+   frontend only reads.
 
 2. `pytest` coverage focuses on `SpilloverNetwork` (matrix operations,
    path search, diff logic) and `RegimeDetector` (alert-triggering

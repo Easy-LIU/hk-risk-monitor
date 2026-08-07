@@ -61,11 +61,12 @@ window is refit as a VAR → FEVD to produce that day's three percentages.
 Chaining these percentages over time produces the moving line chart on the
 web page.
 
-Roughly 2250 windows total; a single VAR(1) fit on 5 variables / 250
-observations costs ~10-20ms, so ~30-45 seconds end to end — too slow for web
-interactivity. **Must precompute offline and cache**
-(`cache/rolling_results.parquet`); the frontend only reads the cache and
-never computes in real time.
+Roughly 2250 windows total. Measured on the real 2015-2026 dataset, the
+full rolling run (2386 windows) takes ~6 seconds — faster than the
+~30-45 second estimate made before the engine existed. Regardless of
+the actual number, recomputing on every slider drag is bad UX, so the
+tool **precomputes offline and caches** (`cache/rolling_results.parquet`);
+the frontend only reads the cache and never computes in real time.
 
 ## Data layer
 
@@ -161,9 +162,14 @@ src/
 
 - No GARCH, no machine learning forecasting, no additional markets
 - Numerically unstable windows are caught with try/except; the count of
-  failed windows is recorded and honestly reported (e.g. "13 of 2250 windows
-  skipped due to numerical instability, 0.6%") rather than pretending
-  everything succeeded
+  failed windows is recorded and honestly reported rather than pretending
+  everything succeeded. In practice, the full 2386-window rolling run on
+  real 2015-2026 data had 0 failures — the failure-tracking mechanism is
+  kept as a safety net regardless, and it already proved its worth once:
+  during development, the hand-implemented Generalized FEVD produced
+  silent NaNs on a degenerate (zero-variance) synthetic test window
+  before an explicit finite-value check was added to turn that into a
+  caught, reported failure instead (see docs/notes.md).
 - The frontend can be cut if time runs short — by the end of Day 5, having a
   working, tested, validated engine is already enough; engine correctness >
   tests > README > frontend polish
