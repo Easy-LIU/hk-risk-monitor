@@ -183,3 +183,72 @@ where the US channel is operating indirectly rather than directly
 through SPX. Grouping USD_CNY with US-driven keeps the attribution
 consistent with the verified causal structure rather than with the
 variable's surface-level geography.
+
+## 6. SpilloverNetwork Edge Threshold
+
+GFEVD produces a dense matrix — nearly every off-diagonal cell is
+non-zero. Without a cutoff for "this edge exists," the network would be
+fully connected at all times, and RegimeDetector's edge
+appearance/disappearance signal could never fire, since there would
+never be a transition from "edge present" to "edge absent." A threshold
+is required.
+
+**The distribution of edge weights is continuous, with no natural gap.**
+Across all 47,720 off-diagonal cells from a full rolling run on the real
+2015-2026 sample (2386 windows), the percentiles are: p10=0.32%,
+p25=0.87%, median=2.45%, p75=7.65%, p90=16.87%, mean=5.79%. There is no
+bimodal split into an obvious "noise cluster" and "signal cluster" —
+choosing a threshold here is a calibration judgment, not a discovery
+of some natural breakpoint the data reveals on its own.
+
+The judgment was made by looking at the min/mean/max of each of the 20
+individual directed edges over the same 2386 windows. Three edges —
+SPX→HSI, SSEC→HSI, HSI→SSEC — are the paper-validated core channels,
+and none of them ever dropped below 1% in this sample; the closest was
+SPX→HSI at a minimum of 1.68%. **The threshold is set at 1% (0.01)**
+specifically because it sits below every core edge's historical minimum
+in this sample, with a real margin (roughly 68% below SPX→HSI's own
+lowest observed reading). At 1%, the weaker/secondary edges (e.g.
+SPX↔USD_YIELD, HSI↔USD_CNY) cross the threshold in 6-10% of windows —
+enough to produce meaningful, occasional appearance/disappearance
+events — while the weakest tier (edges involving USD_CNY, already
+flagged as an unverified channel in docs/notes.md) spend 21-77% of
+windows below it, correctly read as "usually absent, sometimes
+appearing" rather than as stable channels.
+
+**This threshold is a calibration on this specific sample period, not a
+universal constant.** If a future period's SPX→HSI transmission
+genuinely weakens below 1%, the tool would report "edge disappeared" —
+that is the intended signal, not a false positive; a real weakening of
+the US channel is exactly the kind of regime change this tool exists to
+catch. But the threshold's safety margin was derived from this sample's
+edge minimums, so anyone running this engine on a materially different
+historical period (a different decade, a different set of markets)
+should recheck whether 1% still sits below that period's own core-edge
+minimums, rather than assuming the number transfers unchanged. A
+threshold-sensitivity check (0.5% / 1% / 2%, comparing RegimeDetector's
+resulting alert counts) is planned for Day 5 — see docs/notes.md.
+
+## 7. Path Weight Combination (find_all_paths / strongest_path)
+
+An indirect path like A→B→C needs a single number representing its
+strength, combined from the two edge weights along it. The choice is
+multiplication, not addition.
+
+Each edge weight is a variance share — a proportion, not a raw
+magnitude. Multiplying two shares has a property that matches economic
+intuition: **an indirect path's combined weight can never exceed either
+of its individual edge weights**, since both weights are in [0, 1] and
+a product of two fractions is never larger than either factor. Going
+through an extra hop can only leave a transmission chain as strong as
+its weakest link, never stronger — a two-hop path can never be reported
+as a more powerful transmission channel than a strong direct edge.
+
+Addition does not have this property. Summing two variance shares from
+two different decompositions can produce a number larger than either
+individual edge — and larger, in some cases, than 1 — with no
+interpretation in the variance-decomposition framework this tool is
+built on: there is no real quantity that "0.3 (A's contribution to B)
+plus 0.4 (B's contribution to C)" corresponds to. Multiplication
+preserves an interpretation (a compounding transmission efficiency,
+analogous to combining two conditional shares); addition does not.

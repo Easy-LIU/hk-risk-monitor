@@ -257,3 +257,14 @@ co-movement effect). Neither measure is wrong; they answer different
 questions about how the two markets are connected to HSI, and a tool
 that only reported one of them would be missing half of the actual
 transmission structure.
+
+## TODO (Day 5): edge threshold robustness check
+
+`SpilloverNetwork.EDGE_THRESHOLD` is calibrated to 1% (see
+docs/design.md section 6). Before relying on RegimeDetector's edge
+appearance/disappearance signal, rerun the full rolling series through
+RegimeDetector at 0.5%, 1%, and 2% and compare resulting alert counts.
+If the alert count is extremely sensitive to the exact threshold (e.g.
+3 alerts at 0.5% vs. 200 at 2%), that signal is not robust and should
+be documented as a limitation rather than presented as a reliable
+regime-change indicator.
