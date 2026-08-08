@@ -1,0 +1,66 @@
+{
+  "generated_at": "2026-08-08T22:13:09.181728+00:00",
+  "sample_start": "2015-01-01",
+  "sample_end": "2026-08-08",
+  "node_names": [
+    "HSI",
+    "SPX",
+    "SSEC",
+    "USD_CNY",
+    "USD_YIELD"
+  ],
+  "params": {
+    "window": 250,
+    "step": 1,
+    "lag": 1,
+    "fevd_horizon": 10,
+    "edge_threshold": 0.02,
+    "acute_threshold_pp": 4.0,
+    "acute_lookback": 5,
+    "chronic_threshold_pp": 7.0,
+    "chronic_lookback": 60
+  },
+  "alignment_report": {
+    "raw_days": 3027,
+    "aligned_days": 2637,
+    "days_lost": 390,
+    "pct_lost": 0.1288404360753221
+  },
+  "rolling_report": {
+    "total_windows": 2387,
+    "successful_windows": 2387,
+    "failed_windows": 0,
+    "failure_rate": 0.0,
+    "failures": []
+  },
+  "paper_validation": [
+    {
+      "pair": "SPX\u2192HSI",
+      "paper_f": 155.65,
+      "tool_f": 211.79440062758863,
+      "tool_p": 1.3074364873967504e-47,
+      "ratio": 1.3607092876812632
+    },
+    {
+      "pair": "USD_CNY\u2192HSI",
+      "paper_f": 36.61,
+      "tool_f": 0.029857801286265598,
+      "tool_p": 0.8628159344855616,
+      "ratio": 0.0008155640886715542
+    },
+    {
+      "pair": "SSEC\u2192HSI",
+      "paper_f": 11.32,
+      "tool_f": 8.47299436692217,
+      "tool_p": 0.003610628207321038,
+      "ratio": 0.7484977355938314
+    },
+    {
+      "pair": "USD_YIELD\u2192USD_CNY",
+      "paper_f": 16.58,
+      "tool_f": 29.361136861942633,
+      "tool_p": 6.112905958198261e-08,
+      "ratio": 1.77087677092537
+    }
+  ]
+}
