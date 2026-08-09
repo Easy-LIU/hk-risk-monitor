@@ -38,9 +38,9 @@ costs, and risk tolerance.
 
 ## Screenshot
 
-`[SCREENSHOT: dashboard overview — KPI cards + share history chart with reference events]`
+![Dashboard overview: KPI cards, share history chart with reference events and the insufficient-history blind spot shaded](docs/images/dashboard-overview.png)
 
-`[SCREENSHOT: transmission network graph for a selected date]`
+![Transmission network graph for a selected date, with edge weights](docs/images/network-graph.png)
 
 ## How to Run
 
