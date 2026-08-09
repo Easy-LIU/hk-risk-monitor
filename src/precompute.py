@@ -30,6 +30,18 @@ CACHE_DIR = Path(__file__).resolve().parent.parent / "cache"
 
 SAMPLE_START = "2015-01-01"
 
+# Pinned, not "today": every quantitative result this project reports (the
+# paper-validation F-statistics, the alignment-loss percentage, the
+# per-year RegimeDetector calibration table, every number in README.md) is
+# only reproducible if it's computed against a fixed dataset. Letting this
+# default to datetime.now() means the "full sample" silently grows on every
+# rerun -- which is exactly how the acute threshold's full-sample p99 drifted
+# from 4.0 (Day 5) to 3.709 (Day 7) with no code change at all (see
+# docs/design.md section 12 and docs/notes.md). To update the data: change
+# this constant explicitly, rerun precompute.py, and re-check every number
+# quoted in README.md against the new cache -- don't let it drift silently.
+DATA_END_DATE = "2026-08-08"
+
 WINDOW = 250
 STEP = 1
 LAG = 1
@@ -107,7 +119,7 @@ def _write_metadata(
 
 
 def run_pipeline() -> None:
-    sample_end = datetime.now().strftime("%Y-%m-%d")
+    sample_end = DATA_END_DATE
 
     t0 = time.time()
     loader = MarketDataLoader(start=SAMPLE_START, end=sample_end)

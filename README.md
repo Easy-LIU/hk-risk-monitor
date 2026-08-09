@@ -61,6 +61,20 @@ historical minimums, docs/design.md section 6), not a percentile of
 noisy tail events, so it is less exposed to a single event defining its
 own bar — but it has not been re-verified out-of-sample.
 
+**The specific alert list is sensitive to calibration methodology.**
+Comparing in-sample (`scan()`) and out-of-sample
+(`scan_out_of_sample()`) calibration over the same 2015-2026 history
+yields the same qualitative conclusions on all three known stress
+periods, but only 61% overlapping episodes at the individual-alert
+level (matched by field, timescale, and overlapping dates) — the
+remaining 39% appear in only one of the two versions, concentrated in
+years where the calibrated threshold differs most from the fixed
+full-sample value (2018, 2021). Users should treat individual alerts
+as indicative of a real regime shift worth investigating, not as a
+precise, uniquely-determined boundary — the exact date range and
+magnitude of a given episode depends on which calibration method
+produced it. See docs/notes.md for the full comparison.
+
 ## Future Work
 
 ### Third-Party Capital Flow Attribution

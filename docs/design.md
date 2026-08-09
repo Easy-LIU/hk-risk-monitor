@@ -514,3 +514,39 @@ as the original in-sample `scan()` on all three known stress periods
 weakly detected either way) — see docs/notes.md for full numbers,
 including the parts where the two versions disagree at the individual
 episode level despite agreeing on the headline conclusions.
+
+## 12. Pinned Data Version (`DATA_END_DATE`)
+
+`src/precompute.py`'s `SAMPLE_START` was always a fixed constant, but
+the sample's *end* was originally `datetime.now()` — every run fetched
+through "today." This was found to be a real reproducibility bug, not
+a cosmetic detail: the acute threshold's full-sample p99 was 4.0 when
+originally calibrated (Day 5) and had drifted to 3.709 by Day 7 —
+*with no code change at all* — purely because the live dataset grew by
+over a year between the two runs and picked up new extreme events
+(see docs/notes.md's out-of-sample calibration section for the full
+story). Every number this project reports — the paper-validation
+F-statistics, the 12.9% calendar-alignment loss, the per-year
+`RegimeDetector` calibration table, every statistic quoted in
+README.md — is only meaningful if it's tied to a specific, fixed
+dataset. A quantitative research result that changes when rerun without
+any code change cannot be verified by anyone, including the author.
+
+**Fix: `DATA_END_DATE` is now a pinned constant** (currently
+`2026-08-08`, matching the committed cache), not `datetime.now()`.
+Re-running `precompute.py` today, next month, or next year against the
+same `DATA_END_DATE` reproduces the same cache byte-for-byte (verified:
+rerunning after this fix reproduced identical alignment/rolling/alert
+counts). Updating the data is still possible and sometimes desirable
+(this is a "dynamic" tool, per CLAUDE.md's whole premise) — but it must
+be a deliberate, visible action: change `DATA_END_DATE`, rerun
+`precompute.py`, and re-check every number quoted in README.md against
+the regenerated cache, rather than letting the dataset silently drift
+on every rerun.
+
+The pinned end date and the cache's actual build timestamp are both
+surfaced wherever the data is presented — `metadata.json`'s
+`sample_end` / `generated_at` fields, and the app's header caption
+("Data through {sample_end} · cache generated {generated_at}") — so
+anyone looking at a given run of the tool knows exactly which dataset
+snapshot produced it.
