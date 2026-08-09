@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-08T22:13:09.181728+00:00",
+  "generated_at": "2026-08-09T02:05:13.904402+00:00",
   "sample_start": "2015-01-01",
   "sample_end": "2026-08-08",
   "node_names": [
@@ -15,10 +15,9 @@
     "lag": 1,
     "fevd_horizon": 10,
     "edge_threshold": 0.02,
-    "acute_threshold_pp": 4.0,
     "acute_lookback": 5,
-    "chronic_threshold_pp": 7.0,
-    "chronic_lookback": 60
+    "chronic_lookback": 60,
+    "min_calibration_history_days": 252
   },
   "alignment_report": {
     "raw_days": 3027,
@@ -61,6 +60,85 @@
       "tool_f": 29.361136861942633,
       "tool_p": 6.112905958198261e-08,
       "ratio": 1.77087677092537
+    }
+  ],
+  "regime_detector_calibration": [
+    {
+      "year": 2016,
+      "history_days": 0,
+      "status": "insufficient_history",
+      "acute_threshold_pp": null,
+      "chronic_threshold_pp": null
+    },
+    {
+      "year": 2017,
+      "history_days": 209,
+      "status": "insufficient_history",
+      "acute_threshold_pp": null,
+      "chronic_threshold_pp": null
+    },
+    {
+      "year": 2018,
+      "history_days": 439,
+      "status": "calibrated",
+      "acute_threshold_pp": 3.3988660433556364,
+      "chronic_threshold_pp": 6.5
+    },
+    {
+      "year": 2019,
+      "history_days": 666,
+      "status": "calibrated",
+      "acute_threshold_pp": 3.5077112372434915,
+      "chronic_threshold_pp": 7.0
+    },
+    {
+      "year": 2020,
+      "history_days": 892,
+      "status": "calibrated",
+      "acute_threshold_pp": 3.346349757904791,
+      "chronic_threshold_pp": 6.5
+    },
+    {
+      "year": 2021,
+      "history_days": 1120,
+      "status": "calibrated",
+      "acute_threshold_pp": 3.6547959575501077,
+      "chronic_threshold_pp": 9.0
+    },
+    {
+      "year": 2022,
+      "history_days": 1347,
+      "status": "calibrated",
+      "acute_threshold_pp": 3.52539461120086,
+      "chronic_threshold_pp": 8.0
+    },
+    {
+      "year": 2023,
+      "history_days": 1574,
+      "status": "calibrated",
+      "acute_threshold_pp": 3.4046939953419377,
+      "chronic_threshold_pp": 9.5
+    },
+    {
+      "year": 2024,
+      "history_days": 1799,
+      "status": "calibrated",
+      "acute_threshold_pp": 3.5051618757734273,
+      "chronic_threshold_pp": 9.0
+    },
+    {
+      "year": 2025,
+      "history_days": 2023,
+      "status": "calibrated",
+      "acute_threshold_pp": 3.4057558750368986,
+      "chronic_threshold_pp": 6.5
+    },
+    {
+      "year": 2026,
+      "history_days": 2250,
+      "status": "calibrated",
+      "acute_threshold_pp": 3.5680112915466866,
+      "chronic_threshold_pp": 6.5
     }
   ]
 }

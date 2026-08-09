@@ -529,3 +529,157 @@ this pass; see README Future Work.
 view must show only `share_jump` episodes and `centrality_flip` —
 `edge_change` belongs in a collapsed section or separate tab, or it
 will drown out the primary signal entirely.
+
+## Out-of-sample threshold calibration (resolves the in-sample circularity limitation above)
+
+The "three-layer conclusion" above flagged a real methodological gap:
+`scan()`'s acute/chronic thresholds are both calibrated on the *full*
+historical sample, so an event like COVID partly defines the bar it is
+then evaluated against — circular by construction. This was left as a
+documented, unresolved limitation. `RegimeDetector.scan_out_of_sample()`
+fixes it: each calendar year's thresholds are calibrated using only
+`WindowResult`s strictly before that year, so no threshold is ever
+partly defined by the data it's later used to flag.
+
+### Method
+
+- **Recalibration cadence: annual**, not daily. Each new calendar year
+  gets one threshold pair (acute, chronic), computed once from all prior
+  years' data, then applied to every window in that year. This is fully
+  out-of-sample either way (a daily walk-forward would also never see
+  future data), but annual recalibration is ~250x cheaper to compute and
+  produces a threshold that is itself a meaningful, interpretable number
+  ("this year's calibrated bar") rather than a value that imperceptibly
+  shifts every trading day. This mirrors how a real risk function
+  actually operates — thresholds get reviewed periodically, not
+  recomputed continuously — so the engineering shortcut has a genuine
+  business analog, not just a performance justification.
+- **Minimum history: 252 trading days** (~1 year) before a year's
+  threshold is trusted at all. Below that, the year is marked
+  `insufficient_history` and produces **no share_jump alerts** — not
+  because nothing happened, but because the tool does not yet have
+  enough history to say what counts as extreme. This must never be
+  read as "this period was calm." Even at exactly 252 observations, a
+  p99 estimate rests on roughly the 2nd-3rd most extreme value seen so
+  far — inherently noisy no matter the exact cutoff chosen; 252 is a
+  floor for turning calibration on, not a claim of full stability.
+- Same calibration *methods* as the original fixed thresholds (acute:
+  p99 of pooled 5-day deltas; chronic: business-frequency search
+  targeting 3-5 episodes/year), just re-run each year on that year's
+  available history instead of once on everything.
+
+### Result: total counts
+
+| | `scan()` (in-sample) | `scan_out_of_sample()` |
+|---|---|---|
+| share_jump (acute) | 26 | 30 |
+| share_jump (chronic) | 41 | 37 |
+| share_jump total | 67 | 67 |
+| edge_change / centrality_flip | 1719 / 28 (unaffected) | 1719 / 28 |
+
+Share_jump totals happen to match exactly (67 = 67) — see below for why
+this does **not** mean the two versions agree on which events occurred.
+
+### Year-by-year calibration
+
+| Year | History (days) | Status | Acute pp | Chronic pp |
+|---|---|---|---|---|
+| 2016 | 0 | insufficient_history | — | — |
+| 2017 | 209 | insufficient_history | — | — |
+| 2018 | 439 | calibrated | 3.40 | 6.5 |
+| 2019 | 666 | calibrated | 3.51 | 7.0 |
+| 2020 | 892 | calibrated | 3.35 | 6.5 |
+| 2021 | 1120 | calibrated | 3.65 | **9.0** |
+| 2022 | 1347 | calibrated | 3.53 | 8.0 |
+| 2023 | 1574 | calibrated | 3.40 | 9.5 |
+| 2024 | 1799 | calibrated | 3.51 | 9.0 |
+| 2025 | 2023 | calibrated | 3.41 | 6.5 |
+| 2026 | 2250 | calibrated | 3.57 | 6.5 |
+
+**2016-2017 is a real detection blind spot** (209 days of history by
+start of 2017 is short of the 252-day floor) — the tool could not have
+produced a single share_jump alert for that period regardless of what
+happened in it.
+
+### Investigating why: two specific mechanisms, one confirmed as stated, one needing correction
+
+**Acute threshold (every year's out-of-sample value sits below the
+fixed 4.0pp): not a single-event story.** The original hypothesis was
+that COVID inflates the full-sample p99 to 4.0 while pre-COVID
+calibrations (e.g. 2018's, using only 2016-2017 data) land lower at
+3.40 — true in *direction* but not the full mechanism. Two things
+complicate a COVID-only explanation:
+
+1. The "full sample" p99 is not a fixed 4.0 — it has drifted to 3.709
+   as of this run, because this project pulls live data through
+   "today" on every `precompute.py` run, and the sample has grown by
+   over a year since the original Day 5 calibration.
+2. **COVID is not even the most extreme acute event in the current
+   sample.** The 10 largest single 5-day share deltas in the full
+   history are dominated by Idiosyncratic-share swings in April 2025
+   and May 2026 (9.6-11.6pp); COVID's largest (2020-03-09, US-driven,
+   8.26pp) ranks 13th.
+
+Cutoff-by-cutoff p99 does show a real bump when COVID enters (3.346
+pre-COVID → 3.655 through end-2020, +9%), so COVID is a genuine
+contributor — just not the dominant or sole one. The accurate framing:
+**every out-of-sample acute threshold sits below the full-sample value
+because the full sample's tail keeps getting more extreme as later
+years (COVID in 2020, then larger moves in 2025-2026) are added** —
+COVID is one contributor to a general pattern, not a standalone
+explanation.
+
+**Chronic threshold's 2020→2021 jump (6.5→9.0): confirmed exactly as
+hypothesized.** Isolated directly: calibrating on history strictly
+before 2020-02-01 (pre-COVID, n=907) gives 6.5; calibrating on history
+through end of 2020 (post-COVID, n=1120) gives 9.0. The cutoff lines up
+precisely with COVID entering the calibration window. This is the
+intended behavior of out-of-sample calibration, not an artifact: having
+lived through March 2020, the bar for "what counts as an extreme
+60-day drift" should rise, exactly as a real risk desk would recalibrate
+its own sense of normal after a genuine tail event.
+
+### Result: known stress periods — conclusions unchanged, details differ
+
+| Event | `scan()` | `scan_out_of_sample()` |
+|---|---|---|
+| 2020 COVID | 12 episodes, both timescales | 13 episodes, both timescales |
+| 2018 trade war | 3 chronic episodes | 2 chronic episodes |
+| 2022 rate hikes | 3 episodes (weak) | 2 episodes (weak) |
+
+No event's hit/miss verdict flips. COVID remains the clearest, strongest
+signal at both timescales; the trade war remains chronic-only; rate
+hikes remain weakly detected either way. **This is the headline result**:
+the original `scan()` conclusions were not an artifact of in-sample
+circularity — an honestly out-of-sample version reaches the same
+qualitative conclusions.
+
+### But: episode-level matching shows real disagreement, not just boundary noise
+
+Matching `scan()` and `scan_out_of_sample()` episodes by (field,
+timescale, overlapping date range):
+
+- **41 of 67 (61%) matched** — same underlying event, sometimes with a
+  different start/end date because a different year's threshold
+  changed which consecutive days qualified (e.g. a Feb 2018 US-driven
+  chronic episode is 1 day in `scan()` vs. 14 days in
+  `scan_out_of_sample()`, same event, different merge boundary).
+- **26 episodes appear only in `scan()`**, 26 appear **only in
+  `scan_out_of_sample()`** — genuinely different detections, not
+  reboundaried versions of each other. The clearest cluster: May-July
+  2021 (US-driven dropping sharply, Idiosyncratic rising, 9-11pp moves)
+  is entirely absent from `scan()` but produces several chronic
+  episodes in `scan_out_of_sample()` — a direct consequence of 2021's
+  out-of-sample chronic threshold (9.0) differing from the fixed value
+  (7.0) enough to change which week-long clusters of days qualify.
+
+**Conclusion**: the two versions agree on the big picture (which known
+macro events register as structural breaks) but disagree on a
+meaningful fraction of the specific episode-level detections, mostly in
+2018 and 2021 — years where the out-of-sample threshold differs most
+from the fixed full-sample value. Both statements are true
+simultaneously: the methodology is validated at the level this project
+cares about (does the tool flag real regime changes), and the exact
+episode log is threshold-calibration-method-dependent, which is itself
+worth stating plainly rather than only reporting the reassuring
+headline number.

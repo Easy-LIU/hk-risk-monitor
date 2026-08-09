@@ -66,8 +66,29 @@ def load_metadata() -> dict:
         return json.load(f)
 
 
-def build_share_chart(rolling: pd.DataFrame, selected_date: pd.Timestamp) -> go.Figure:
+def build_share_chart(
+    rolling: pd.DataFrame,
+    selected_date: pd.Timestamp,
+    calibration_report: list[dict] | None = None,
+) -> go.Figure:
     fig = go.Figure()
+
+    if calibration_report:
+        insufficient_years = [
+            r["year"] for r in calibration_report if r["status"] == "insufficient_history"
+        ]
+        if insufficient_years:
+            blind_spot_end = pd.Timestamp(f"{max(insufficient_years) + 1}-01-01")
+            fig.add_vrect(
+                x0=rolling["date"].min().timestamp() * 1000,
+                x1=blind_spot_end.timestamp() * 1000,
+                fillcolor="rgba(150,150,150,0.15)",
+                line_width=0,
+                annotation_text="Insufficient history to calibrate — not a quiet period",
+                annotation_position="inside top",
+                annotation_font_size=10,
+            )
+
     for field in ["us_share", "china_share", "idio_share"]:
         fig.add_trace(
             go.Scatter(
@@ -321,14 +342,19 @@ def main():
         value=date_options[-1],
     )
 
+    calibration_report = metadata.get("regime_detector_calibration", [])
     st.plotly_chart(
-        build_share_chart(rolling, pd.Timestamp(selected_date)), width="stretch"
+        build_share_chart(rolling, pd.Timestamp(selected_date), calibration_report),
+        width="stretch",
     )
     st.caption(
         "Dotted orange lines = shock events, dashed purple lines = structural changes "
         "(see src/events.py for sourcing). These are **annotated reference events** — "
         "a hand-curated list for historical context, not RegimeDetector output. "
-        "See 'Detected Alerts' below for what the tool actually detected."
+        "See 'Detected Alerts' below for what the tool actually detected. The shaded "
+        "region (if present) marks a period with too little prior history for "
+        "RegimeDetector's out-of-sample calibration to produce any share-jump verdict — "
+        "**not** a period known to be quiet; see docs/design.md section 11."
     )
 
     st.subheader(f"Transmission Network — {selected_date}")
@@ -371,7 +397,10 @@ def main():
             "(**acute** = sudden shock, re-evaluate hedge now; **chronic** = sustained "
             "drift, flag for periodic review) and centrality rank flips (dominant risk "
             "source switching between SPX and SSEC). Distinct from the reference event "
-            "lines above, which are curated, not detected."
+            "lines above, which are curated, not detected. Share-jump thresholds are "
+            "calibrated out-of-sample, once per calendar year, using only that year's "
+            "prior history (see the shaded region on the chart above for years with too "
+            "little history to calibrate at all) — see docs/design.md section 11."
         )
         st.dataframe(
             detected[["date", "signal_type", "timescale", "magnitude", "description"]],

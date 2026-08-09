@@ -161,3 +161,94 @@ def test_alerts_are_sorted_by_date():
     alerts = detector.scan(windows)
 
     assert [a.date for a in alerts] == sorted(a.date for a in alerts)
+
+
+def _make_year(year: int, n: int, values: list[float]) -> list[WindowResult]:
+    ds = pd.bdate_range(f"{year}-01-02", periods=n)
+    return [make_window(d, v, 0.50, 1 - 0.50 - v) for d, v in zip(ds, values)]
+
+
+def test_scan_out_of_sample_first_year_is_insufficient_history():
+    year_2020 = _make_year(2020, 15, [0.20] * 15)
+    detector = RegimeDetector(acute_lookback=1)
+
+    _, report = detector.scan_out_of_sample(year_2020, min_history_days=10)
+
+    assert len(report) == 1
+    assert report[0]["year"] == 2020
+    assert report[0]["history_days"] == 0
+    assert report[0]["status"] == "insufficient_history"
+    assert report[0]["acute_threshold_pp"] is None
+    assert report[0]["chronic_threshold_pp"] is None
+
+
+def test_scan_out_of_sample_no_alerts_during_insufficient_history():
+    # Even a huge jump can't produce an alert without enough prior history
+    # to calibrate a threshold against.
+    year_2020 = _make_year(2020, 15, [0.20] * 7 + [0.60] + [0.20] * 7)
+    detector = RegimeDetector(acute_lookback=1)
+
+    alerts, report = detector.scan_out_of_sample(year_2020, min_history_days=10)
+
+    assert report[0]["status"] == "insufficient_history"
+    assert [a for a in alerts if a.signal_type == "share_jump"] == []
+
+
+def test_scan_out_of_sample_calibrates_using_only_prior_years():
+    # 2020: calm, small day-to-day noise only -- this is what 2021's
+    # threshold must be calibrated from.
+    year_2020 = _make_year(2020, 15, [0.20 + 0.001 * i for i in range(15)])
+    # 2021: includes one large mid-year jump. If this year's own data leaked
+    # into its threshold calibration, the test below comparing against a
+    # calibration computed purely from 2020 would fail.
+    year_2021_values = [0.20] * 5 + [0.35] + [0.20] * 4
+    year_2021 = _make_year(2021, len(year_2021_values), year_2021_values)
+
+    detector = RegimeDetector(acute_lookback=1, chronic_threshold_pp=1000.0, chronic_lookback=1000)
+    alerts, report = detector.scan_out_of_sample(year_2020 + year_2021, min_history_days=10)
+
+    report_by_year = {r["year"]: r for r in report}
+    assert report_by_year[2020]["status"] == "insufficient_history"
+    assert report_by_year[2021]["status"] == "calibrated"
+
+    expected_threshold = detector._calibrate_acute_from_history(year_2020)
+    assert report_by_year[2021]["acute_threshold_pp"] == pytest.approx(expected_threshold)
+
+    acute_jumps = [a for a in alerts if a.signal_type == "share_jump" and a.timescale == "acute"]
+    assert any(a.start_date.year == 2021 for a in acute_jumps)
+
+
+def test_scan_out_of_sample_leaves_edge_and_centrality_signals_unchanged():
+    # edge_change and centrality_flip don't use calibrated thresholds, so
+    # scan() and scan_out_of_sample() should agree on them exactly.
+    spx_dominant = identity_matrix().copy()
+    for target in ["HSI", "USD_CNY", "USD_YIELD"]:
+        spx_dominant.loc[target, "SPX"] = 0.10
+        spx_dominant.loc[target, "SSEC"] = 0.01
+    ssec_dominant = identity_matrix().copy()
+    for target in ["HSI", "USD_CNY", "USD_YIELD"]:
+        ssec_dominant.loc[target, "SPX"] = 0.01
+        ssec_dominant.loc[target, "SSEC"] = 0.10
+
+    ds = pd.bdate_range("2020-01-02", periods=20)
+    matrices = [spx_dominant if i % 2 == 0 else ssec_dominant for i in range(20)]
+    windows = [
+        make_window(d, 0.20, 0.20, 0.60, fevd_matrix=m) for d, m in zip(ds, matrices)
+    ]
+
+    detector = RegimeDetector(acute_threshold_pp=1000.0, chronic_threshold_pp=1000.0)
+    old_alerts = detector.scan(windows)
+    new_alerts, _ = detector.scan_out_of_sample(windows, min_history_days=10)
+
+    old_other = [a for a in old_alerts if a.signal_type != "share_jump"]
+    new_other = [a for a in new_alerts if a.signal_type != "share_jump"]
+    assert [(a.date, a.signal_type, a.description) for a in old_other] == [
+        (a.date, a.signal_type, a.description) for a in new_other
+    ]
+
+
+def test_scan_out_of_sample_handles_empty_input():
+    detector = RegimeDetector()
+    alerts, report = detector.scan_out_of_sample([])
+    assert alerts == []
+    assert report == []

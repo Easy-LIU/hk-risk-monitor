@@ -462,3 +462,55 @@ detector's output a historical reference frame, not to imply the tool
 Implementation: the event list lives in its own config (e.g.
 `src/events.py` or a JSON file), separate from the plotting code, so it
 can be reviewed and extended independently of chart logic.
+
+## 11. Out-of-Sample Threshold Calibration
+
+`RegimeDetector.scan()`'s acute/chronic thresholds are calibrated once
+on the full sample — which means an extreme event sitting inside that
+sample (COVID) partly defines the bar it is then evaluated against.
+`scan_out_of_sample()` removes this: each calendar year's thresholds
+are calibrated using only `WindowResult`s strictly before that year.
+
+**Recalibration is annual, not daily.** A literal "every point in time
+uses only its own past" reading would recompute thresholds every
+trading day. This was deliberately not implemented that way, for two
+reasons:
+
+1. **Cost.** Daily recalibration means the (already non-trivial)
+   business-frequency search for the chronic threshold — sweep several
+   candidate values, run full episode aggregation for each, measure
+   episodes/year — would run roughly 2000+ times instead of ~10. Annual
+   recalibration is out-of-sample by exactly the same logic (a given
+   year's threshold still never sees that year's or any later year's
+   data) while being orders of magnitude cheaper.
+2. **Interpretability.** A threshold that changes value every single
+   day is hard to reason about or communicate — is a change on a given
+   day because a genuinely new regime started, or because one more day
+   of history nudged a percentile by a rounding error? An annual
+   threshold is a single, stable, quotable number: "in 2021, the bar
+   for an unusual 60-day drift was 9.0 percentage points." This choice
+   has a real-world analog worth stating explicitly: production risk
+   systems typically review and reset thresholds/limits on a periodic
+   cadence (quarterly, annually) rather than recomputing them
+   continuously — the engineering shortcut here mirrors how this kind
+   of calibration is actually operated, not just a performance hack.
+
+**Minimum history floor: 252 trading days (~1 year).** Below this, a
+year is marked `insufficient_history` and produces no share_jump
+alerts for that period — an explicit statement of "not enough history
+to judge," never to be read as "nothing unusual happened." In this
+project's sample, this creates a real blind spot for 2016-2017 (the
+`WindowResult` series itself only starts 2016-02-02, so by start of
+2017 there are only 209 days of history — short of the floor). Any UI
+or documentation surfacing `scan_out_of_sample()` output must visually
+distinguish "insufficient_history" periods from "calibrated, no alert
+fired," since the two mean opposite things about how much confidence to
+place in an apparent calm period.
+
+**Verified result, not assumed:** run against the real 2015-2026
+sample, `scan_out_of_sample()` reaches the same qualitative conclusions
+as the original in-sample `scan()` on all three known stress periods
+(COVID hits both timescales, trade war is chronic-only, rate hikes are
+weakly detected either way) — see docs/notes.md for full numbers,
+including the parts where the two versions disagree at the individual
+episode level despite agreeing on the headline conclusions.

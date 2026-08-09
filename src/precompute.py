@@ -22,7 +22,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.data_loader import MarketDataLoader
-from src.detector import RegimeDetector
+from src.detector import MIN_CALIBRATION_HISTORY_DAYS, RegimeDetector
 from src.network import SpilloverNetwork
 from src.var_engine import RollingVAREngine
 
@@ -35,10 +35,11 @@ STEP = 1
 LAG = 1
 FEVD_HORIZON = 10
 
-# Calibrated in Day 5; see docs/notes.md for the full calibration trail.
-ACUTE_THRESHOLD_PP = 4.0
+# acute/chronic lookback are fixed; the thresholds themselves are no longer
+# fixed constants -- RegimeDetector.scan_out_of_sample() calibrates them
+# per calendar year, out-of-sample (see docs/design.md section 11 and
+# docs/notes.md for why this replaced the original fixed-threshold scan()).
 ACUTE_LOOKBACK = 5
-CHRONIC_THRESHOLD_PP = 7.0
 CHRONIC_LOOKBACK = 60
 
 
@@ -75,6 +76,7 @@ def _write_metadata(
     rolling_report: dict,
     validation: dict,
     node_names: list[str],
+    calibration_report: list[dict],
 ) -> None:
     metadata = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -87,14 +89,18 @@ def _write_metadata(
             "lag": LAG,
             "fevd_horizon": FEVD_HORIZON,
             "edge_threshold": SpilloverNetwork.EDGE_THRESHOLD,
-            "acute_threshold_pp": ACUTE_THRESHOLD_PP,
             "acute_lookback": ACUTE_LOOKBACK,
-            "chronic_threshold_pp": CHRONIC_THRESHOLD_PP,
             "chronic_lookback": CHRONIC_LOOKBACK,
+            "min_calibration_history_days": MIN_CALIBRATION_HISTORY_DAYS,
         },
         "alignment_report": alignment_report,
         "rolling_report": rolling_report,
         "paper_validation": validation["comparison"].to_dict(orient="records"),
+        # share_jump thresholds are calibrated out-of-sample per calendar
+        # year (RegimeDetector.scan_out_of_sample) -- see docs/design.md
+        # section 11 -- so there is no longer a single fixed
+        # acute/chronic_threshold_pp to report; this table replaces it.
+        "regime_detector_calibration": calibration_report,
     }
     with open(CACHE_DIR / "metadata.json", "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2, default=str)
@@ -119,21 +125,20 @@ def run_pipeline() -> None:
     print(f"[2/4] Rolling VAR/FEVD complete in {time.time() - t0:.1f}s: {rolling_report}")
 
     t0 = time.time()
-    detector = RegimeDetector(
-        acute_threshold_pp=ACUTE_THRESHOLD_PP,
-        acute_lookback=ACUTE_LOOKBACK,
-        chronic_threshold_pp=CHRONIC_THRESHOLD_PP,
-        chronic_lookback=CHRONIC_LOOKBACK,
+    detector = RegimeDetector(acute_lookback=ACUTE_LOOKBACK, chronic_lookback=CHRONIC_LOOKBACK)
+    alerts, calibration_report = detector.scan_out_of_sample(
+        window_results, min_history_days=MIN_CALIBRATION_HISTORY_DAYS
     )
-    alerts = detector.scan(window_results)
-    print(f"[3/4] RegimeDetector produced {len(alerts)} alerts in {time.time() - t0:.1f}s")
+    print(f"[3/4] RegimeDetector (out-of-sample) produced {len(alerts)} alerts in {time.time() - t0:.1f}s")
 
     t0 = time.time()
     node_names = list(window_results[0].fevd_matrix.columns)
     CACHE_DIR.mkdir(exist_ok=True)
     _write_rolling_results(window_results, node_names)
     _write_alerts(alerts)
-    _write_metadata(sample_end, alignment_report, rolling_report, validation, node_names)
+    _write_metadata(
+        sample_end, alignment_report, rolling_report, validation, node_names, calibration_report
+    )
     print(f"[4/4] Cache written to {CACHE_DIR} in {time.time() - t0:.1f}s")
 
 

@@ -41,6 +41,26 @@ with the engine. See [docs/notes.md](docs/notes.md) for the full
 diagnostic trail. USD_CNY → HSI should be treated as an unverified
 channel in the tool's output.
 
+**2016-2017 is a detection blind spot, by design.** `RegimeDetector`'s
+share-jump thresholds are calibrated out-of-sample (see below): a given
+year's threshold only uses prior years' data, and requires at least 252
+trading days of history before it is trusted at all. The tool's
+`WindowResult` series starts 2016-02-02, so 2016-2017 falls short of
+that floor — this period produces **no share_jump alerts regardless of
+what happened**, because the tool did not yet have enough history to
+judge what counts as extreme. This must not be read as "these years
+were calm." The chart marks this period explicitly rather than leaving
+it silently empty.
+
+**`SpilloverNetwork.EDGE_THRESHOLD` (2%) is still calibrated on the full
+sample**, not out-of-sample — only `RegimeDetector`'s acute/chronic
+thresholds were addressed (see below). This is a smaller concern than
+the share-jump thresholds were: `EDGE_THRESHOLD` was calibrated from a
+structural property (staying below the core paper-validated edges'
+historical minimums, docs/design.md section 6), not a percentile of
+noisy tail events, so it is less exposed to a single event defining its
+own bar — but it has not been re-verified out-of-sample.
+
 ## Future Work
 
 ### Third-Party Capital Flow Attribution
@@ -108,15 +128,23 @@ calibrated against) — but doing so responsibly would require treating
 via segmented modeling, rather than pooling them into a single rolling
 window that crosses the Stock Connect / 811 reform boundary.
 
-### Out-of-Sample Threshold Calibration
+### Out-of-Sample Threshold Calibration — Done for RegimeDetector, Not Yet for EDGE_THRESHOLD
 
-Both `SpilloverNetwork.EDGE_THRESHOLD` and `RegimeDetector`'s
-percentile-based acute threshold are calibrated using percentiles of
-the full historical sample — which means events like COVID that sit
-inside that same sample partly define the bar they are then evaluated
-against (see docs/notes.md's "three-layer conclusion" on RegimeDetector
-for the fullest discussion of this circularity). A more rigorous design
-would calibrate out-of-sample: an expanding window (using only data
-available up to each historical point in time) or a rolling percentile,
-so a threshold is never partly defined by the event it is later used to
-flag. Not implemented in this pass.
+`RegimeDetector.scan_out_of_sample()` now calibrates the acute/chronic
+share-jump thresholds using an annually-recalibrated expanding window
+(see docs/design.md section 11), resolving the in-sample circularity
+this section originally flagged as unresolved. Verified against the
+original in-sample `scan()`: the same three known stress periods
+produce the same qualitative verdicts (COVID detected at both
+timescales, trade war chronic-only, rate hikes weakly detected either
+way), though the specific episode-level detections differ by about 39%
+between the two versions — see docs/notes.md for the full comparison,
+including why (year-to-year threshold differences change which
+consecutive days merge into an episode).
+
+`SpilloverNetwork.EDGE_THRESHOLD` was not part of this fix and remains
+calibrated on the full sample. Extending the same expanding-window
+approach to it is the natural next step, though it calibrates
+differently (structural margin below core edges' minimums, not a
+percentile) so the method would need adapting rather than reusing
+`RegimeDetector`'s calibration functions directly.
