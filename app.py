@@ -104,6 +104,73 @@ def build_share_chart(rolling: pd.DataFrame, selected_date: pd.Timestamp) -> go.
     return fig
 
 
+TRAILING_WINDOW_DAYS = 252  # ~12 months of trading days
+
+
+def build_kpi_observation(
+    rolling: pd.DataFrame,
+    field: str,
+    label: str,
+    counterpart_field: str | None = None,
+    counterpart_label: str | None = None,
+) -> str:
+    """Purely observational: current level relative to its own recent and
+    full-sample history, plus (if a counterpart is given) what the other
+    share has historically averaged when this one is in its current
+    below/above-median regime. Never a recommendation -- see docs/design.md
+    section 10 / CLAUDE.md's "reference events, not detected" principle,
+    which this extends to "describe state, don't prescribe action."
+    """
+    series = rolling[field]
+    current = series.iloc[-1]
+
+    trailing = series.iloc[-TRAILING_WINDOW_DAYS:] if len(series) >= TRAILING_WINDOW_DAYS else series
+    pct_rank = (trailing < current).mean() * 100
+    if pct_rank <= 10:
+        recency_phrase = "near its 12-month low"
+    elif pct_rank >= 90:
+        recency_phrase = "near its 12-month high"
+    else:
+        recency_phrase = "within its typical 12-month range"
+
+    sentence = f"Currently {current * 100:.1f}%, {recency_phrase}."
+
+    if counterpart_field is not None:
+        median_val = series.median()
+        below_median = current < median_val
+        regime_mask = series < median_val if below_median else series >= median_val
+        conditional_mean = rolling.loc[regime_mask, counterpart_field].mean()
+        overall_mean = rolling[counterpart_field].mean()
+        relation = "below" if below_median else "at or above"
+        sentence += (
+            f" Over the full history, when {label} was {relation} its median "
+            f"({median_val * 100:.1f}%), {counterpart_label} averaged "
+            f"{conditional_mean * 100:.1f}% (vs {overall_mean * 100:.1f}% overall)."
+        )
+
+    return sentence
+
+
+# "Reproduces" = within 3x of the paper's F-statistic in either direction
+# and statistically significant. Same order-of-magnitude check used
+# throughout docs/notes.md's diagnostics, not an exact-match bar.
+REPRODUCES_RATIO_BOUNDS = (1 / 3, 3.0)
+REPRODUCES_P_THRESHOLD = 0.05
+
+
+def build_validation_table(paper_validation: list[dict]) -> pd.DataFrame:
+    df = pd.DataFrame(paper_validation)
+    lower, upper = REPRODUCES_RATIO_BOUNDS
+    reproduces = (df["ratio"].between(lower, upper)) & (df["tool_p"] < REPRODUCES_P_THRESHOLD)
+    df["verdict"] = reproduces.map(
+        {
+            True: "Reproduces at similar magnitude",
+            False: "Does not reproduce (unverified)",
+        }
+    )
+    return df
+
+
 def _reconstruct_fevd_matrix(row: pd.Series, node_names: list[str]) -> pd.DataFrame:
     return pd.DataFrame(
         [[row[f"fevd__{target}__{source}"] for source in node_names] for target in node_names],
@@ -122,6 +189,7 @@ def build_network_figure(network: SpilloverNetwork) -> go.Figure:
 
     fig = go.Figure()
 
+    edge_mid_x, edge_mid_y, edge_hover = [], [], []
     for source in network.node_names:
         for target in network.node_names:
             if source == target:
@@ -153,6 +221,26 @@ def build_network_figure(network: SpilloverNetwork) -> go.Figure:
                 arrowcolor="rgba(31,119,180,0.65)",
                 text="",
             )
+            # Arrows (annotations) aren't hoverable in Plotly, so place a
+            # small marker at each edge's midpoint (offset 65% toward the
+            # arrowhead, closer to target than source) purely to carry a
+            # hover tooltip with the exact weight.
+            edge_mid_x.append(x0 + dx * 0.65)
+            edge_mid_y.append(y0 + dy * 0.65)
+            edge_hover.append(f"{source} → {target}: {weight:.1%}")
+
+    if edge_mid_x:
+        fig.add_trace(
+            go.Scatter(
+                x=edge_mid_x,
+                y=edge_mid_y,
+                mode="markers",
+                marker=dict(size=14, color="rgba(31,119,180,0.01)"),
+                hoverinfo="text",
+                hovertext=edge_hover,
+                showlegend=False,
+            )
+        )
 
     xs = [positions[name][0] for name in network.node_names]
     ys = [positions[name][1] for name in network.node_names]
@@ -203,6 +291,12 @@ def main():
     latest = rolling.iloc[-1]
     lookback_row = rolling.iloc[-31] if len(rolling) > 30 else rolling.iloc[0]
 
+    kpi_counterparts = {
+        "us_share": ("china_share", SHARE_LABELS["china_share"]),
+        "china_share": ("us_share", SHARE_LABELS["us_share"]),
+        "idio_share": (None, None),
+    }
+
     col1, col2, col3 = st.columns(3)
     for col, field in zip([col1, col2, col3], ["us_share", "china_share", "idio_share"]):
         delta_pp = (latest[field] - lookback_row[field]) * 100
@@ -210,6 +304,12 @@ def main():
             SHARE_LABELS[field],
             f"{latest[field] * 100:.1f}%",
             f"{delta_pp:+.1f}pp (30 trading days)",
+        )
+        counterpart_field, counterpart_label = kpi_counterparts[field]
+        col.caption(
+            build_kpi_observation(
+                rolling, field, SHARE_LABELS[field], counterpart_field, counterpart_label
+            )
         )
 
     st.subheader("Transmission Shares Over Time")
@@ -240,8 +340,11 @@ def main():
     with net_col:
         st.plotly_chart(build_network_figure(network), width="stretch")
         st.caption(
-            f"Edges shown have weight > EDGE_THRESHOLD ({SpilloverNetwork.EDGE_THRESHOLD:.0%}); "
-            "arrow width scales with edge weight."
+            "An arrow from A to B means A's past values explain part of B's forecast "
+            "error variance — e.g. SPX → HSI indicates US equity moves account for some "
+            f"of HSI's variance. Edges shown have weight > EDGE_THRESHOLD "
+            f"({SpilloverNetwork.EDGE_THRESHOLD:.0%}); arrow width scales with weight; "
+            "hover an edge's midpoint for its exact value."
         )
     with table_col:
         edge_rows = []
@@ -288,12 +391,34 @@ def main():
         )
 
     st.divider()
-    st.caption("Engine correctness check — full-sample Granger causality vs. published paper Table 3:")
-    validation_df = pd.DataFrame(metadata["paper_validation"])
-    st.dataframe(validation_df, width="stretch", hide_index=True)
+    st.subheader("Engine Correctness Check")
     st.caption(
-        "USD_CNY→HSI does not reproduce against the paper and is a known unverified "
-        "channel — see docs/notes.md."
+        "This tool refits a VAR once on the entire sample (not the rolling windows) and "
+        "runs Granger causality tests — a statistical check for whether one market's past "
+        "values help predict another's. The F-statistic column below is compared against "
+        "the same four relationships reported in the author's published paper (Table 3), "
+        "as a check that this engine reproduces a previously validated result rather than "
+        "computing something new and unverified."
+    )
+    validation_df = build_validation_table(metadata["paper_validation"])
+    st.dataframe(
+        validation_df,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "pair": "Relationship",
+            "paper_f": st.column_config.NumberColumn("Paper F-stat", format="%.2f"),
+            "tool_f": st.column_config.NumberColumn("This tool's F-stat", format="%.2f"),
+            "tool_p": st.column_config.NumberColumn("p-value", format="%.2e"),
+            "ratio": st.column_config.NumberColumn("Ratio (tool/paper)", format="%.2f"),
+            "verdict": "Observation",
+        },
+    )
+    st.caption(
+        "\"Reproduces\" means the tool's F-statistic is within 3x of the paper's in either "
+        "direction and statistically significant (p<0.05) — the same order of magnitude, "
+        "not an exact match (different data source and sample period than the paper). "
+        "USD_CNY→HSI does not reproduce; see docs/notes.md for the full diagnostic trail."
     )
     st.caption(
         f"{metadata['alignment_report']['aligned_days']} aligned trading days "
